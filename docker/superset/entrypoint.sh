@@ -17,8 +17,13 @@ superset init
 
 exec gunicorn \
     --bind 0.0.0.0:8088 \
-    --workers 2 \
+    --workers 4 \
+    --worker-class gthread \
+    --threads 2 \
     --timeout 120 \
+    --no-sendfile \
+    --access-logfile - \
+    --access-logformat '%(h)s "%(r)s" %(s)s %(b)s %(M)sms' \
     --limit-request-line 0 \
     --limit-request-field_size 0 \
     "superset.app:create_app()"

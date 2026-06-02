@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: stg_klines
+    description: "Staging view over silver_klines. One row per candle."
+    columns:
+      - name: open_time
+        description: "Candle open time (UTC)"
+        tests:
+          - not_null
+      - name: exchange
+        description: "Exchange identifier"
+        tests:
+          - not_null
+      - name: symbol
+        description: "Trading pair (ccxt format)"
+        tests:
+          - not_null
+      - name: interval
+        description: "Candle interval"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']
+      - name: high
+        description: "High price — must be >= open, close, low"
+        tests:
+          - not_null
+      - name: low
+        description: "Low price — must be <= open, close, high"
+        tests:
+          - not_null
+      - name: close
+        description: "Close price"
+        tests:
+          - not_null
+      - name: volume
+        description: "Base asset volume (>= 0)"
+        tests:
+          - not_null

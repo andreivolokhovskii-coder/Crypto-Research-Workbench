@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: fact_candles
+    description: >
+      Gold-layer enriched candles. One row per (exchange, symbol, interval, open_time).
+      Adds price_change, price_change_pct, candle_range, is_bullish derived from silver_klines.
+    columns:
+      - name: open_time
+        tests: [not_null]
+      - name: exchange
+        tests: [not_null]
+      - name: symbol
+        tests: [not_null]
+      - name: price_change_pct
+        description: "Percentage price change from open to close"
+        tests: [not_null]
+      - name: is_bullish
+        description: "1 if close >= open, else 0"
+        tests:
+          - accepted_values:
+              values: [0, 1]
+
+  - name: mart_volatility
+    description: >
+      Daily rolling volatility metrics per symbol.
+      Aggregates 1m candles to daily OHLCV, then computes:
+        realized_vol_7d  — annualized stddev of 7-day log returns
+        realized_vol_30d — annualized stddev of 30-day log returns
+        avg_true_range   — 14-day ATR
+    columns:
+      - name: window_start
+        description: "Start of the trading day (UTC midnight)"
+        tests: [not_null]
+      - name: exchange
+        tests: [not_null]
+      - name: symbol
+        tests: [not_null]
+      - name: realized_vol_7d
+        description: "7-day annualized realized volatility (0 if fewer than 2 days of data)"
+      - name: realized_vol_30d
+        description: "30-day annualized realized volatility"
+      - name: avg_true_range
+        description: "14-day average true range in quote currency"

@@ -14,6 +14,12 @@ FEATURE_FLAGS = {
     "DASHBOARD_NATIVE_FILTERS": True,
 }
 
+# Disable Flask-Talisman CSP — the nonce-per-request approach breaks
+# React dynamic imports (webpack code splitting) in local dev.
+TALISMAN_ENABLED = False
+
+SQL_MAX_ROW = 50000
+
 # Allow embedding dashboards without authentication in local dev
 SESSION_COOKIE_SAMESITE = None
 WTF_CSRF_ENABLED = False

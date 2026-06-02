@@ -17,8 +17,6 @@
 #   dbt             — analytical modeling
 # =============================================================================
 
-version: "3.9"
-
 # ---------------------------------------------------------------------------
 # Shared Airflow configuration
 # ---------------------------------------------------------------------------
@@ -105,9 +103,7 @@ services:
       - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
       - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
     healthcheck:
-      test: >
-        ["CMD-SHELL",
-         "clickhouse-client --user ${CLICKHOUSE_USER} --password ${CLICKHOUSE_PASSWORD} --query 'SELECT 1'"]
+      test: ["CMD-SHELL", "clickhouse-client --user ${CLICKHOUSE_USER} --password ${CLICKHOUSE_PASSWORD} --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -172,27 +168,28 @@ services:
   # Kafka — real-time event backbone (KRaft mode, no ZooKeeper)
   # -------------------------------------------------------------------------
   kafka:
-    image: bitnami/kafka:3.6
+    image: confluentinc/cp-kafka:7.6.1
     container_name: workbench-kafka
     environment:
-      KAFKA_CFG_NODE_ID: ${KAFKA_NODE_ID:-1}
-      KAFKA_CFG_PROCESS_ROLES: broker,controller
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:-1}
-      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
-      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
+      KAFKA_NODE_ID: ${KAFKA_NODE_ID:-1}
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR:-1}
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR:-1}
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR:-1}
+      CLUSTER_ID: "zbhYrTxaQ6O6s0I5__FCQg"
       TZ: UTC
     volumes:
-      - kafka_data:/bitnami/kafka
+      - kafka_data:/var/lib/kafka/data
     ports:
       - "${KAFKA_EXTERNAL_PORT:-9092}:9092"
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list > /dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -204,10 +201,14 @@ services:
   # Spark master
   # -------------------------------------------------------------------------
   spark-master:
-    image: bitnami/spark:3.5
+    image: apache/spark:3.5.3
     container_name: workbench-spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    user: root
     environment:
-      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=0.0.0.0
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
       - TZ=UTC
     ports:
       - "${SPARK_MASTER_PORT:-7077}:7077"
@@ -224,14 +225,15 @@ services:
   # Spark worker
   # -------------------------------------------------------------------------
   spark-worker:
-    image: bitnami/spark:3.5
+    image: apache/spark:3.5.3
     container_name: workbench-spark-worker
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    user: root
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
       - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY:-2g}
       - SPARK_WORKER_CORES=${SPARK_WORKER_CORES:-2}
       - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-2g}
+      - SPARK_WORKER_WEBUI_PORT=8081
       - TZ=UTC
     depends_on:
       spark-master:
@@ -379,6 +381,40 @@ services:
       - workbench
 
   # -------------------------------------------------------------------------
+  # Jupyter — research notebooks, UI at http://localhost:8888
+  # -------------------------------------------------------------------------
+  jupyter:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: workbench-jupyter
+    command: ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888",
+              "--no-browser", "--NotebookApp.token=''",
+              "--NotebookApp.password=''", "--allow-root"]
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_HTTP_PORT: ${CLICKHOUSE_HTTP_PORT:-8123}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      MINIO_HOST: minio
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      TZ: UTC
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - .:/app
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    working_dir: /app
+    networks:
+      - workbench
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
   # dbt — analytical modeling (run via: make dbt-build | dbt-test | dbt-docs)
   # -------------------------------------------------------------------------
   dbt:
@@ -392,6 +428,7 @@ services:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      DBT_PROFILES_DIR: /usr/app/dbt
       TZ: UTC
     volumes:
       - ./dbt:/usr/app/dbt

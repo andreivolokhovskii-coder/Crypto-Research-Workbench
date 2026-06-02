@@ -1,0 +1,47 @@
+version: 2
+
+sources:
+  - name: crypto
+    database: crypto
+    schema: crypto
+    description: "Raw and normalized tables populated by the ingestion layer"
+    tables:
+      - name: silver_coin_metadata
+        description: "Normalized coin reference data from CoinGecko snapshots."
+        columns:
+          - name: coin_id
+            description: "CoinGecko coin id (e.g. bitcoin)"
+          - name: symbol
+            description: "Ticker symbol (uppercase, e.g. BTC)"
+          - name: market_cap_rank
+            description: "Market cap rank at snapshot time"
+          - name: snapshot_date
+            description: "Date of the metadata snapshot"
+
+      - name: silver_klines
+        description: "Normalized OHLCV candles. UTC DateTime timestamps, deduped via ReplacingMergeTree."
+        columns:
+          - name: exchange
+            description: "Exchange identifier (e.g. binance)"
+          - name: symbol
+            description: "Trading pair in ccxt format (e.g. BTC/USDT)"
+          - name: interval
+            description: "Candle interval (e.g. 1m, 1h, 1d)"
+          - name: open_time
+            description: "Candle open time in UTC"
+          - name: close_time
+            description: "Candle close time in UTC"
+          - name: open
+            description: "Open price"
+          - name: high
+            description: "High price"
+          - name: low
+            description: "Low price"
+          - name: close
+            description: "Close price"
+          - name: volume
+            description: "Base asset volume"
+          - name: quote_volume
+            description: "Quote asset volume"
+          - name: trade_count
+            description: "Number of trades in candle"
