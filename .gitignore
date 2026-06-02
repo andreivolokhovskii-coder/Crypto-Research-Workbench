@@ -1,0 +1,88 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# Logs
+logs/
+*.log
+
+# Build / cache
+build/
+dist/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+.coverage
+
+# Docker
+*.pid
+*.local
+
+# Airflow
+airflow/logs/
+airflow/.env
+airflow/airflow.cfg
+airflow/airflow.db
+
+# dbt
+dbt/logs/
+dbt/target/
+dbt/dbt_packages/
+profiles.yml
+
+# Spark / checkpoints
+spark-warehouse/
+metastore_db/
+checkpoints/
+*.crc
+
+# MinIO / object dumps
+minio-data/
+
+# ClickHouse local data
+clickhouse/data/
+clickhouse/tmp/
+
+# Tests / temp files
+.tmp/
+.temp/
+tmp/
+*.tmp
+
+# Generated artifacts / exports
+exports/
+artifacts/
+reports/
+
+# Superset
+superset_home/

@@ -1,0 +1,35 @@
+# =============================================================================
+# Crypto Research Workbench — Python dependencies
+# Used by: docker/app/Dockerfile (ingestion & processing jobs)
+# =============================================================================
+
+# Exchange data access
+ccxt>=4.1.0
+requests>=2.31.0
+
+# Data processing
+pandas>=2.0.0
+pyarrow>=14.0.0
+numpy>=1.26.0
+
+# Object storage (MinIO / S3)
+boto3>=1.29.0
+minio>=7.2.0
+
+# ClickHouse connectivity
+clickhouse-driver>=0.2.7
+clickhouse-connect>=0.6.0
+
+# Real-time streaming
+confluent-kafka>=2.3.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.4.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Code quality
+ruff>=0.1.5
