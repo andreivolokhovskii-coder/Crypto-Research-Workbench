@@ -37,12 +37,22 @@ x-airflow-common:
       apache-airflow-providers-apache-spark
       apache-airflow-providers-amazon
       clickhouse-driver
+      clickhouse-connect>=0.6.0,<0.9.0
       boto3
+      ccxt>=4.1.0
+      pandas>=2.0.0
+      pyarrow>=14.0.0
+      python-dotenv>=1.0.0
+      requests>=2.31.0
+      minio>=7.2.0
+      pydantic>=2.4.0
+      dbt-clickhouse==1.7.1
     TZ: UTC
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - airflow_logs:/opt/airflow/logs
     - airflow_plugins:/opt/airflow/plugins
+    - .:/app:ro
   networks:
     - workbench
   depends_on:
@@ -343,6 +353,66 @@ services:
         condition: service_healthy
     networks:
       - workbench
+
+  # -------------------------------------------------------------------------
+  # WebSocket producer — Binance WS → Kafka klines.raw
+  # -------------------------------------------------------------------------
+  ws-producer:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: workbench-ws-producer
+    command: ["python", "ingestion/realtime/ws_producer.py"]
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_KLINES_RAW:  klines.raw
+      DEFAULT_EXCHANGE:        ${DEFAULT_EXCHANGE:-binance}
+      DEFAULT_SYMBOLS:         ${DEFAULT_SYMBOLS:-BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT}
+      DEFAULT_KLINE_INTERVAL:  ${DEFAULT_KLINE_INTERVAL:-1m}
+      LOG_LEVEL:               ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED:        "1"
+      TZ: UTC
+    volumes:
+      - .:/app
+    working_dir: /app
+    networks:
+      - workbench
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # -------------------------------------------------------------------------
+  # Streaming consumer — Kafka klines.raw → ClickHouse (rt + bronze + silver + signals)
+  # -------------------------------------------------------------------------
+  stream-consumer:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: workbench-stream-consumer
+    command: ["python", "ingestion/realtime/klines_consumer.py"]
+    restart: unless-stopped
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC_KLINES_RAW:  klines.raw
+      CLICKHOUSE_HOST:         clickhouse
+      CLICKHOUSE_HTTP_PORT:    ${CLICKHOUSE_HTTP_PORT:-8123}
+      CLICKHOUSE_DB:           ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER:         ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD:     ${CLICKHOUSE_PASSWORD}
+      LOG_LEVEL:               ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED:        "1"
+      TZ: UTC
+    volumes:
+      - .:/app
+    working_dir: /app
+    networks:
+      - workbench
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
 
   # -------------------------------------------------------------------------
   # App — Python ingestion and processing jobs

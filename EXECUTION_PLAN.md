@@ -401,21 +401,21 @@
 Добавить live-слой, который реально повышает полезность платформы.
 
 ## Что входит в MVP realtime
-- [ ] WebSocket producer
-- [ ] Kafka topic(s)
+- [x] WebSocket producer
+- [x] Kafka topic(s)
 - [ ] Spark Structured Streaming consumer
-- [ ] Bronze/Silver streaming sink
+- [x] Bronze/Silver streaming sink
 - [ ] Gold realtime outputs
 
 ## Первые сигналы
-- [ ] volume spike
-- [ ] large trade detector
+- [x] volume spike
+- [x] large trade detector
 - [ ] accelerated activity
 - [ ] exchange divergence
 - [ ] freshness lag
 
 ## Что обязательно не забыть
-- [ ] checkpointing
+- [x] checkpointing
 - [ ] deduplication
 - [ ] watermarking
 - [ ] restart safety
@@ -590,18 +590,18 @@
 
 MVP готов, если одновременно выполнены условия:
 
-- [ ] стек поднимается одной командой;
-- [ ] historical data загружаются и доступны для анализа;
-- [ ] bronze / silver / gold реализованы;
+- [x] стек поднимается одной командой;
+- [x] historical data загружаются и доступны для анализа;
+- [x] bronze / silver / gold реализованы;
 - [ ] gold models проходят базовые проверки;
-- [ ] есть ClickHouse serving layer;
-- [ ] есть dbt models + tests;
-- [ ] есть минимум 1 Airflow DAG;
-- [ ] есть 10 saved research queries;
-- [ ] есть 3 notebooks;
+- [x] есть ClickHouse serving layer;
+- [x] есть dbt models + tests;
+- [x] есть минимум 1 Airflow DAG;
+- [x] есть 10 saved research queries;
+- [x] есть 3 notebooks;
 - [ ] есть хотя бы 3 dashboard pages;
-- [ ] есть хотя бы 1 live path;
-- [ ] есть 2–3 realtime сигнала;
+- [x] есть хотя бы 1 live path;
+- [x] есть 2–3 realtime сигнала;
 - [ ] есть README + docs, достаточные для понимания проекта.
 
 ---

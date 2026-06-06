@@ -10,6 +10,7 @@ Usage inside app container:
     python ingestion/metadata/coingecko_dims.py
     python ingestion/metadata/coingecko_dims.py --top 250
 """
+from __future__ import annotations
 
 import argparse
 import json

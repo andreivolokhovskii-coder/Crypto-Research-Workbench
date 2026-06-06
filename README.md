@@ -1,177 +1,261 @@
-# README.md
-
 # Crypto Research Workbench
 
-An open-source self-hosted platform for collecting, normalizing, exploring, and monitoring crypto market data in a reproducible local environment.
+A self-hosted, open-source platform for collecting, normalising, and exploring crypto market data.
+One command brings up the full stack; data starts flowing within seconds.
 
 ---
 
-## What this project is
+## What it does
 
-**Crypto Research Workbench** is a local-first research platform that combines:
-
-- historical market data ingestion,
-- real-time trade monitoring,
-- medallion data architecture,
-- analytical marts,
-- dashboards,
-- reusable SQL research queries,
-- and notebook-based research workflows.
-
-The goal is to create a system that is not only technically robust, but also **actually useful after deployment** for market investigation and repeatable research.
-
----
-
-## Why this project exists
-
-Crypto market analysis often suffers from:
-
-- fragmented data sources,
-- weak reproducibility,
-- disconnected historical and real-time workflows,
-- dependence on third-party tools,
-- and lack of a self-hosted local research environment.
-
-This project exists to solve those problems by creating a **controllable, reusable, and extensible research workbench**.
+| Capability | Details |
+|---|---|
+| **Historical ingestion** | Pulls OHLCV klines from any ccxt exchange, stores bronze → silver → gold via medallion architecture |
+| **Live streaming** | Binance WebSocket → Kafka → ClickHouse in real time, signals emitted on each closed candle |
+| **Analytical layer** | dbt models: `fact_candles`, `mart_volatility` (rolling 7d/30d vol, ATR), `dim_coin` |
+| **Research queries** | 10 saved SQL scans: unusual volume, movers, breakout candidates, regime summary, data health |
+| **Notebooks** | 3 Jupyter notebooks: daily market scan, asset deep-dive, cross-asset comparison |
+| **Orchestration** | Airflow DAGs: daily pipeline, historical backfill, data quality checks |
+| **Dashboards** | Superset with ClickHouse datasets pre-configured |
+| **Signals** | `volume_spike`, `large_candle` — auto-detected on every closed candle |
 
 ---
 
-## Who this project is for
+## Quick start
 
-### Researchers / Analysts
-Use it to:
-- scan the market,
-- explore historical behavior,
-- investigate anomalies,
-- compare exchanges,
-- and reuse saved workflows.
+```bash
+git clone https://github.com/your-username/crypto-research-workbench
+cd crypto-research-workbench
 
-### Developers / Data Engineers
-Use it to:
-- study a local self-hosted data platform,
-- explore batch + streaming architecture,
-- contribute new sources and signals,
-- or use it as a reference implementation.
+cp .env.example .env      # adjust passwords if needed
+docker compose up -d      # pull + start all services (~3 min first run)
 
-### Crypto Enthusiasts
-Use it to:
-- view market overview pages,
-- inspect assets,
-- follow anomaly feeds,
-- and compare exchange behavior.
+# Load 30 days of historical data
+docker compose run --rm app python ingestion/historical/klines_backfill.py
 
-### Open-Source Contributors
-Use it to:
-- add exchanges,
-- create analytical models,
-- contribute dashboards,
-- improve developer experience,
-- and expand research capabilities.
+# Build analytical models
+docker compose run --rm dbt sh -c "dbt deps && dbt build"
 
----
-
-## What you can do with it
-
-- load and query historical market data;
-- monitor live trade activity;
-- track unusual market behavior;
-- compare exchanges;
-- investigate assets through dashboards;
-- run reusable research SQL;
-- use notebook templates for deeper analysis;
-- extend the system with new signals and sources.
-
----
-
-## Core Product Features
-
-### Historical Market Backbone
-- historical OHLCV / candlestick ingestion;
-- normalized storage and transformations;
-- analytical marts for time-series analysis.
-
-### Real-Time Monitoring
-- live trade ingestion;
-- signal generation;
-- anomaly detection;
-- freshness monitoring.
-
-### Research Layer
-- saved SQL queries;
-- notebook templates;
-- watchlists;
-- reusable workflows.
-
-### User-Facing Dashboards
-- market overview;
-- asset research page;
-- anomaly feed;
-- exchange comparison;
-- data health / freshness.
-
-### Open-Source Platform Layer
-- modular code structure;
-- self-hosted setup;
-- documented contribution paths;
-- extension guides.
+# Start live streaming
+docker compose up -d ws-producer stream-consumer
+```
 
 ---
 
 ## Architecture
 
-### High-Level Layers
-1. **Ingestion Layer**
-   - historical data
-   - real-time trade stream
-   - metadata sources
-
-2. **Storage Layer**
-   - bronze
-   - silver
-   - gold
-   - analytical serving layer
-
-3. **Processing Layer**
-   - Python ingestion jobs
-   - Spark/PySpark jobs
-   - dbt transformation models
-
-4. **Orchestration Layer**
-   - scheduled workflows
-   - validations
-   - reruns
-   - freshness checks
-
-5. **Serving Layer**
-   - dashboards
-   - SQL access
-   - notebooks
-
-6. **Research Layer**
-   - saved research queries
-   - watchlists
-   - notebook workflows
-   - investigation templates
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DATA SOURCES                                │
+│   Binance REST API (ccxt)          Binance WebSocket                │
+│   CoinGecko REST API               (5 symbols, 1m klines)          │
+└──────────────┬────────────────────────────────┬────────────────────┘
+               │ historical                     │ real-time
+               ▼                                ▼
+┌──────────────────────────┐       ┌────────────────────────┐
+│   klines_backfill.py     │       │    ws_producer.py      │
+│   coingecko_dims.py      │       │   (WebSocket → Kafka)  │
+└──────────────┬───────────┘       └────────────┬───────────┘
+               │                                │
+               ▼                                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    STORAGE LAYER                                  │
+│                                                                   │
+│  MinIO (S3-compatible)            Kafka (KRaft, 5 partitions)    │
+│  ├── bronze/klines/               topic: klines.raw              │
+│  ├── silver/klines/               topic: trades.raw              │
+│  └── bronze/metadata/                                            │
+└──────────────┬──────────────────────────────┬────────────────────┘
+               │                              │
+               ▼                              ▼
+┌─────────────────────────┐    ┌──────────────────────────────┐
+│  ClickHouse (medallion) │    │   klines_consumer.py         │
+│                         │    │   (Kafka → ClickHouse)       │
+│  BRONZE                 │◄───┤                              │
+│  ├── bronze_klines      │    │   Writes:                    │
+│  └── bronze_coin_meta   │    │   ├── rt_latest_kline        │
+│                         │    │   ├── bronze_klines          │
+│  SILVER                 │    │   ├── silver_klines          │
+│  ├── silver_klines      │    │   └── rt_signals             │
+│  └── silver_coin_meta   │    └──────────────────────────────┘
+│                         │
+│  GOLD (dbt managed)     │
+│  ├── fact_candles       │
+│  ├── mart_volatility    │
+│  ├── dim_coin           │
+│  └── stg_klines (view)  │
+│                         │
+│  REALTIME               │
+│  ├── rt_latest_kline    │
+│  └── rt_signals         │
+└──────────────┬──────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    SERVING LAYER                                 │
+│                                                                  │
+│  Superset (dashboards)    JupyterLab (notebooks)                │
+│  localhost:8088           localhost:8888                        │
+│                                                                  │
+│  SQL Lab                  Airflow (orchestration)               │
+│  (10 research queries)    localhost:8085                        │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Architecture Diagram
+## Service URLs
 
-> Add Mermaid or static image here.
+| Service | URL | Credentials |
+|---|---|---|
+| Airflow | http://localhost:8085 | admin / admin |
+| Superset | http://localhost:8088 | admin / admin |
+| JupyterLab | http://localhost:8888 | no auth |
+| MinIO Console | http://localhost:9002 | minioadmin / see .env |
+| Spark Master UI | http://localhost:8081 | — |
+| ClickHouse HTTP | http://localhost:8123 | crypto_user / see .env |
 
-### Example Mermaid Placeholder
-```mermaid
-flowchart LR
-    A[Historical APIs / Dumps] --> B[Ingestion Layer]
-    C[Live WebSocket Stream] --> D[Kafka]
-    B --> E[Bronze Storage]
-    D --> E
-    E --> F[Silver Transformations]
-    F --> G[Gold Marts]
-    G --> H[ClickHouse]
-    H --> I[Dashboards]
-    H --> J[Saved SQL Queries]
-    H --> K[Research Notebooks]
-    L[Airflow] --> B
-    L --> F
-    L --> G
+---
+
+## Stack
+
+| Component | Technology |
+|---|---|
+| Message broker | Kafka 3.6 (KRaft, no ZooKeeper) |
+| Analytical DB | ClickHouse 23.8 |
+| Object storage | MinIO (S3-compatible) |
+| Batch processing | Apache Spark 3.5 |
+| Orchestration | Apache Airflow 2.8 |
+| Transformation | dbt-core 1.7 + dbt-clickhouse |
+| Dashboards | Apache Superset 3.0 |
+| Notebooks | JupyterLab 4 |
+| Ingestion | Python 3.11 + ccxt + confluent-kafka + websockets |
+| Metadata storage | PostgreSQL 15 (Airflow backend) |
+
+---
+
+## Data model
+
+### Medallion layers
+
+```
+bronze_klines       raw ms-timestamps, append-only
+silver_klines       UTC DateTime, ReplacingMergeTree (idempotent loads)
+fact_candles        + price_change_pct, candle_range, is_bullish   (dbt)
+mart_volatility     7d/30d annualised vol, 14-day ATR              (dbt)
+dim_coin            market_cap_rank, coingecko_id                  (dbt)
+rt_latest_kline     latest tick per symbol, updated in real time
+rt_signals          volume_spike / large_candle, TTL 7 days
+```
+
+### Default universe
+
+`BTCUSDT · ETHUSDT · SOLUSDT · BNBUSDT · XRPUSDT` — change via `DEFAULT_SYMBOLS` in `.env`.
+
+---
+
+## Research queries
+
+Pre-built SQL files in `queries/`:
+
+| File | What it finds |
+|---|---|
+| `01_unusual_volume.sql` | Volume z-score > 2 in the last hour |
+| `02_realized_volatility_scan.sql` | 7d/30d vol ranking + expansion ratio |
+| `03_top_movers.sql` | Biggest % moves in last 24h |
+| `04_price_volume_divergence.sql` | Price/volume divergence patterns |
+| `05_intraday_range_anomalies.sql` | Candles with range z-score > 3 |
+| `06_market_regime_summary.sql` | Regime classification per symbol |
+| `07_long_wick_scan.sql` | Wicks > 2× body size |
+| `08_active_symbols_scan.sql` | 1h / 4h / 24h activity snapshot |
+| `09_breakout_candidates.sql` | Near 30d high/low with rising volume |
+| `10_data_health.sql` | Freshness and completeness check |
+
+Paste any of these into Superset SQL Lab → http://localhost:8088/superset/sqllab/
+
+---
+
+## Airflow DAGs
+
+| DAG | Schedule | Description |
+|---|---|---|
+| `daily_pipeline` | every 6h | incremental klines + metadata + dbt build |
+| `data_quality` | daily 02:00 UTC | freshness + dbt test + row count checks |
+| `historical_backfill` | manual | full backfill, parameterised via UI |
+
+---
+
+## Notebooks
+
+`notebooks/` — open in JupyterLab at http://localhost:8888:
+
+- `01_daily_market_scan.ipynb` — movers, vol snapshot, regime map
+- `02_asset_deep_dive.ipynb` — candlestick chart, rolling vol, return distribution, volume profile
+- `03_cross_asset_comparison.ipynb` — rebased performance, correlation matrix, risk/return scatter
+
+---
+
+## Makefile targets
+
+```bash
+make up               # docker compose up -d
+make down             # docker compose down
+make backfill         # run historical klines backfill
+make metadata-refresh # refresh CoinGecko coin metadata
+make dbt-build        # run dbt build inside container
+make dbt-test         # run dbt tests
+make clickhouse-client# open ClickHouse shell
+make pytest           # run Python test suite
+make lint             # ruff lint
+```
+
+---
+
+## Configuration
+
+All settings are in `.env` (copy from `.env.example`).
+Key variables:
+
+```ini
+DEFAULT_SYMBOLS=BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT
+DEFAULT_KLINE_INTERVAL=1m
+DEFAULT_BACKFILL_DAYS=30
+DEFAULT_EXCHANGE=binance
+```
+
+---
+
+## Project layout
+
+```
+├── ingestion/
+│   ├── historical/klines_backfill.py   historical OHLCV pipeline
+│   ├── metadata/coingecko_dims.py      coin metadata from CoinGecko
+│   └── realtime/
+│       ├── ws_producer.py              Binance WS → Kafka
+│       └── klines_consumer.py          Kafka → ClickHouse + signals
+├── dbt/
+│   ├── models/staging/                 stg_klines (view)
+│   └── models/marts/                   fact_candles, mart_volatility, dim_coin
+├── airflow/dags/                       daily_pipeline, data_quality, historical_backfill
+├── clickhouse/ddl/                     schema DDL (bronze/silver/gold/rt)
+├── spark_jobs/                         batch Spark jobs (extensible)
+├── notebooks/                          3 research notebooks
+├── queries/                            10 saved SQL queries
+├── docker/                             Dockerfiles + entrypoints
+└── docker-compose.yml                  full stack definition
+```
+
+---
+
+## Adding a new exchange
+
+1. Check ccxt supports it: `python -c "import ccxt; print('okx' in dir(ccxt))"`
+2. Set `DEFAULT_EXCHANGE=okx` in `.env`
+3. Adjust `DEFAULT_SYMBOLS` to the exchange's symbol format
+4. Re-run `make backfill`
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

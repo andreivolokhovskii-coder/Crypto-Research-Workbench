@@ -13,6 +13,7 @@ Usage inside app container:
     python ingestion/historical/klines_backfill.py --days 7 --interval 1h
     python ingestion/historical/klines_backfill.py --symbols BTCUSDT,ETHUSDT --days 90 --exchange binance
 """
+from __future__ import annotations
 
 import argparse
 import logging

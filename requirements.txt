@@ -38,3 +38,6 @@ ruff>=0.1.5
 jupyterlab>=4.0.0
 matplotlib>=3.8.0
 plotly>=5.18.0
+
+# Streaming
+websockets>=12.0
