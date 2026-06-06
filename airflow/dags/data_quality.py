@@ -25,12 +25,12 @@ DEFAULT_ARGS = {
 }
 
 CH_ENV = {
+    "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
     "CLICKHOUSE_HOST":      "clickhouse",
     "CLICKHOUSE_HTTP_PORT": "8123",
     "CLICKHOUSE_DB":        "crypto",
     "CLICKHOUSE_USER":      "crypto_user",
     "CLICKHOUSE_PASSWORD":  "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
-    "DBT_PROFILES_DIR":     "/app/dbt",
 }
 
 FRESHNESS_SQL = """
@@ -91,7 +91,12 @@ with DAG(
 
     dbt_test = BashOperator(
         task_id="dbt_test",
-        bash_command="cd /app/dbt && dbt test --quiet",
+        bash_command=(
+            "export DBT_PROFILES_DIR=$(mktemp -d /tmp/dbt_run.XXXXXX) && "
+            "cp -r /app/dbt/. \"$DBT_PROFILES_DIR/\" && "
+            "rm -rf \"$DBT_PROFILES_DIR/target\" \"$DBT_PROFILES_DIR/logs\" && "
+            "cd \"$DBT_PROFILES_DIR\" && dbt test --quiet"
+        ),
         env=CH_ENV,
     )
 

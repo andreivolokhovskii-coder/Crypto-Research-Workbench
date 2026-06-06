@@ -32,6 +32,24 @@ x-airflow-common:
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # ClickHouse / MinIO creds — needed by PythonOperator tasks that call
+    # os.getenv(...) directly in-process (BashOperator env= dicts don't apply here)
+    CLICKHOUSE_HOST:         clickhouse
+    CLICKHOUSE_HTTP_PORT:    ${CLICKHOUSE_HTTP_PORT:-8123}
+    CLICKHOUSE_DB:           ${CLICKHOUSE_DB}
+    CLICKHOUSE_USER:         ${CLICKHOUSE_USER}
+    CLICKHOUSE_PASSWORD:     ${CLICKHOUSE_PASSWORD}
+    S3_ENDPOINT:             ${S3_ENDPOINT}
+    AWS_ACCESS_KEY_ID:       ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY:   ${AWS_SECRET_ACCESS_KEY}
+    MINIO_BUCKET_BRONZE:     ${MINIO_BUCKET_BRONZE}
+    MINIO_BUCKET_SILVER:     ${MINIO_BUCKET_SILVER}
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    KAFKA_TOPIC_KLINES_RAW:  ${KAFKA_TOPIC_KLINES_RAW}
+    DEFAULT_EXCHANGE:        ${DEFAULT_EXCHANGE}
+    DEFAULT_SYMBOLS:         ${DEFAULT_SYMBOLS}
+    DEFAULT_KLINE_INTERVAL:  ${DEFAULT_KLINE_INTERVAL}
+    DEFAULT_BACKFILL_DAYS:   ${DEFAULT_BACKFILL_DAYS}
     # Extra pip packages installed at container start (slow on first run)
     _PIP_ADDITIONAL_REQUIREMENTS: >-
       apache-airflow-providers-apache-spark

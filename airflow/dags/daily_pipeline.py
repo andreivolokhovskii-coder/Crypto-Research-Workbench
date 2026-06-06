@@ -24,6 +24,7 @@ DEFAULT_ARGS = {
 }
 
 COMMON_ENV = {
+    "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
     "CLICKHOUSE_HOST":      "clickhouse",
     "CLICKHOUSE_HTTP_PORT": "8123",
     "CLICKHOUSE_DB":        "crypto",
@@ -74,17 +75,27 @@ with DAG(
     dbt_build = BashOperator(
         task_id="dbt_build",
         bash_command=(
-            "cd /app/dbt && "
-            "dbt deps --quiet && "
+            # /app is mounted read-only — copy the dbt project to a unique
+            # writable scratch dir (per task-run, to avoid races with other
+            # dbt tasks) so `dbt deps`/logs/target can write there
+            "export DBT_PROFILES_DIR=$(mktemp -d /tmp/dbt_run.XXXXXX) && "
+            "cp -r /app/dbt/. \"$DBT_PROFILES_DIR/\" && "
+            # Drop stale compile cache — its paths point at the source dir
+            # and confuse dbt's partial-parse dependency inference
+            "rm -rf \"$DBT_PROFILES_DIR/target\" \"$DBT_PROFILES_DIR/logs\" && "
+            "cd \"$DBT_PROFILES_DIR\" && "
+            # dbt_packages is already vendored in the project — re-running
+            # `dbt deps` re-downloads it and produces a version drift that
+            # breaks dbt's static ref() dependency inference
             "dbt build --quiet"
         ),
         env={
+            "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
             "CLICKHOUSE_HOST":      "clickhouse",
             "CLICKHOUSE_HTTP_PORT": "8123",
             "CLICKHOUSE_DB":        "crypto",
             "CLICKHOUSE_USER":      "crypto_user",
             "CLICKHOUSE_PASSWORD":  "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
-            "DBT_PROFILES_DIR":     "/app/dbt",
         },
     )
 
