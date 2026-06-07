@@ -60,6 +60,13 @@ deploy:
 	$(COMPOSE) run --rm dbt dbt deps
 	@echo "Building dbt models..."
 	$(COMPOSE) run --rm dbt dbt build
+	@echo "Running Spark market regime job..."
+	$(COMPOSE) exec -T spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--packages com.clickhouse:clickhouse-jdbc:0.6.5 \
+		--conf spark.executor.memory=1g \
+		--conf spark.driver.memory=512m \
+		/app/spark_jobs/volatility_batch.py || echo "  [warn] Spark job failed — mart_market_regime will be empty (run 'make spark-volatility' manually)"
 	@echo ""
 	@echo "=========================================="
 	@echo " Stack is up. Service credentials:"
