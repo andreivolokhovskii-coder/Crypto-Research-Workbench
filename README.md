@@ -11,7 +11,7 @@ One command brings up the full stack; data starts flowing within seconds.
 |---|---|
 | **Historical ingestion** | Pulls OHLCV klines from any ccxt exchange, stores bronze → silver → gold via medallion architecture |
 | **Live streaming** | Binance WebSocket → Kafka → ClickHouse in real time, signals emitted on each closed candle |
-| **Analytical layer** | dbt models: `fact_candles`, `mart_volatility` (rolling 7d/30d vol, ATR), `dim_coin` |
+| **Analytical layer** | dbt models: `fact_candles`, `mart_volatility` (rolling 7d/30d vol, ATR), `dim_coin`; Spark batch: `mart_market_regime` (regime classification: trending/volatile/ranging) |
 | **Research queries** | 10 saved SQL scans: unusual volume, movers, breakout candidates, regime summary, data health |
 | **Notebooks** | 3 Jupyter notebooks: daily market scan, asset deep-dive, cross-asset comparison |
 | **Orchestration** | Airflow DAGs: daily pipeline, historical backfill, data quality checks |
@@ -23,7 +23,7 @@ One command brings up the full stack; data starts flowing within seconds.
 ## Quick start
 
 ```bash
-git clone https://github.com/your-username/crypto-research-workbench
+git clone https://github.com/Andrei-info/crypto-research-workbench
 cd crypto-research-workbench
 
 cp .env.example .env      # adjust passwords if needed
@@ -78,9 +78,10 @@ docker compose up -d ws-producer stream-consumer
 │  ├── silver_klines      │    │   └── rt_signals             │
 │  └── silver_coin_meta   │    └──────────────────────────────┘
 │                         │
-│  GOLD (dbt managed)     │
-│  ├── fact_candles       │
-│  ├── mart_volatility    │
+│  GOLD (dbt + Spark)     │
+│  ├── fact_candles       │  ← dbt
+│  ├── mart_volatility    │  ← dbt
+│  ├── mart_market_regime │  ← Spark
 │  ├── dim_coin           │
 │  └── stg_klines (view)  │
 │                         │
@@ -97,7 +98,7 @@ docker compose up -d ws-producer stream-consumer
 │  localhost:8088           localhost:8888                        │
 │                                                                  │
 │  SQL Lab                  Airflow (orchestration)               │
-│  (10 research queries)    localhost:8085                        │
+│  (10 research queries)    localhost:8080                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -107,7 +108,7 @@ docker compose up -d ws-producer stream-consumer
 
 | Service | URL | Credentials |
 |---|---|---|
-| Airflow | http://localhost:8085 | admin / admin |
+| Airflow | http://localhost:8080 | admin / admin |
 | Superset | http://localhost:8088 | admin / admin |
 | JupyterLab | http://localhost:8888 | no auth |
 | MinIO Console | http://localhost:9002 | minioadmin / see .env |

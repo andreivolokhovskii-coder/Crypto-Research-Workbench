@@ -76,6 +76,18 @@ INTERVAL_MS = {
     "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
 }
 
+# Quote currencies in priority order (longest suffix first to avoid partial match).
+_QUOTE_CURRENCIES = ["USDT", "BUSD", "USDC", "BTC", "ETH", "BNB"]
+
+
+def _normalize_symbol(raw: str) -> str:
+    """Convert Binance symbol (e.g. 'BTCUSDT') to 'BTC/USDT' format."""
+    s = raw.upper()
+    for quote in _QUOTE_CURRENCIES:
+        if s.endswith(quote) and len(s) > len(quote):
+            return f"{s[:-len(quote)]}/{quote}"
+    return s  # unknown quote currency — return as-is
+
 
 def parse_kline(msg: dict) -> dict | None:
     """Parse Binance kline stream message into a unified record."""
@@ -86,7 +98,7 @@ def parse_kline(msg: dict) -> dict | None:
         k = data["k"]
         return {
             "exchange":    EXCHANGE_ID,
-            "symbol":      k["s"].upper().replace("USDT", "/USDT"),  # BTCUSDT → BTC/USDT
+            "symbol":      _normalize_symbol(k["s"]),
             "interval":    k["i"],
             "open_time":   int(k["t"]),
             "close_time":  int(k["T"]),

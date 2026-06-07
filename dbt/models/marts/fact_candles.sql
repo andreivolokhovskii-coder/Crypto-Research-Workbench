@@ -1,7 +1,7 @@
 {{
     config(
         materialized='table',
-        engine='ReplacingMergeTree()',
+        engine='ReplacingMergeTree(ingested_at)',
         order_by='(exchange, symbol, interval, open_time)',
         partition_by='toYYYYMM(open_time)',
         settings={'index_granularity': 8192}
@@ -28,6 +28,7 @@ select
     high - low                                          as candle_range,
     if(close >= open, 1, 0)                             as is_bullish,
 
-    toDate(open_time)                                   as _partition_date
+    toDate(open_time)                                   as _partition_date,
+    now()                                               as ingested_at
 
 from {{ ref('stg_klines') }}

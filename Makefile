@@ -161,3 +161,12 @@ postgres-client: validate-env
 .PHONY: spark-shell
 spark-shell: validate-env
 	$(COMPOSE) exec spark-master bash
+
+.PHONY: spark-volatility
+spark-volatility: validate-env
+	$(COMPOSE) exec spark-master /opt/spark/bin/spark-submit \
+		--master spark://spark-master:7077 \
+		--packages com.clickhouse:clickhouse-jdbc:0.6.5 \
+		--conf spark.executor.memory=1g \
+		--conf spark.driver.memory=512m \
+		/app/spark_jobs/volatility_batch.py

@@ -33,14 +33,23 @@ with DAG(
 
     run_backfill = BashOperator(
         task_id="run_klines_backfill",
+        # Pass params via env vars — never interpolate user-supplied values
+        # directly into a bash_command string (command injection risk).
         bash_command=(
             "python /app/ingestion/historical/klines_backfill.py "
-            "--exchange {{ params.exchange }} "
-            "--symbols  {{ params.symbols }} "
-            "--interval {{ params.interval }} "
-            "--days     {{ params.days }}"
+            "--exchange \"$BF_EXCHANGE\" "
+            "--symbols  \"$BF_SYMBOLS\" "
+            "--interval \"$BF_INTERVAL\" "
+            "--days     \"$BF_DAYS\""
         ),
         env={
+            "PATH":                "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+            # Backfill params — sourced from DAG params, not interpolated into the shell string
+            "BF_EXCHANGE":         "{{ params.exchange }}",
+            "BF_SYMBOLS":          "{{ params.symbols }}",
+            "BF_INTERVAL":         "{{ params.interval }}",
+            "BF_DAYS":             "{{ params.days | string }}",
+            # ClickHouse / MinIO creds
             "CLICKHOUSE_HOST":     "clickhouse",
             "CLICKHOUSE_HTTP_PORT":"8123",
             "CLICKHOUSE_DB":       "{{ var.value.get('CLICKHOUSE_DB',       'crypto') }}",

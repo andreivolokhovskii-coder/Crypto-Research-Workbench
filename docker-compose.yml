@@ -241,6 +241,9 @@ services:
     ports:
       - "${SPARK_MASTER_PORT:-7077}:7077"
       - "${SPARK_MASTER_UI_PORT:-8081}:8080"
+    volumes:
+      - ./spark_jobs:/app/spark_jobs:ro
+      - ./.env:/app/.env:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ > /dev/null || exit 1"]
       interval: 15s

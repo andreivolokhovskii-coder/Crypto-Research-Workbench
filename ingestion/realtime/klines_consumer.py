@@ -218,7 +218,9 @@ def main() -> None:
         "bootstrap.servers":  KAFKA_BOOTSTRAP,
         "group.id":           GROUP_ID,
         "auto.offset.reset":  "latest",
-        "enable.auto.commit": True,
+        # Manual commit: we commit only after a successful ClickHouse flush so
+        # that a transient insert failure doesn't advance the offset and lose data.
+        "enable.auto.commit": False,
     })
     consumer.subscribe([TOPIC_KLINES])
 
@@ -280,12 +282,18 @@ def main() -> None:
                              "(total ticks=%d closed=%d)",
                              len(latest_buf), len(closed_buf), len(signal_buf),
                              total_msgs, total_closed)
-                except Exception as e:
-                    log.error("Flush failed: %s", e)
 
-                latest_buf.clear()
-                closed_buf.clear()
-                signal_buf.clear()
+                    # Commit offsets only after all inserts succeeded.
+                    # On failure we keep the buffers intact and retry next cycle
+                    # — duplicates in ClickHouse are tolerable (RMT dedupes),
+                    # but losing messages is not.
+                    consumer.commit(asynchronous=False)
+                    latest_buf.clear()
+                    closed_buf.clear()
+                    signal_buf.clear()
+                except Exception as e:
+                    log.error("Flush failed (will retry next cycle): %s", e)
+
                 last_flush = time.monotonic()
 
     except KeyboardInterrupt:

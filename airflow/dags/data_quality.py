@@ -109,4 +109,7 @@ with DAG(
         },
     )
 
-    [freshness_check, dbt_test, row_count_check]
+    # Run checks in sequence: structural freshness → model correctness → data volume.
+    # Sequential ordering ensures dbt_test doesn't run against stale data, and
+    # row_count_check only runs after the model layer is confirmed healthy.
+    freshness_check >> dbt_test >> row_count_check

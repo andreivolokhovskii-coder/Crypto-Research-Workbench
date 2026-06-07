@@ -17,4 +17,7 @@ select
     volume,
     quote_volume,
     trade_count
-from {{ source('crypto', 'silver_klines') }}
+-- FINAL forces ClickHouse to collapse unmerged duplicate versions from
+-- ReplacingMergeTree before returning rows; without it, downstream marts
+-- can receive multiple versions of the same candle until a background merge runs.
+from {{ source('crypto', 'silver_klines') }} FINAL

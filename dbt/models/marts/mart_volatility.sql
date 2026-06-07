@@ -58,7 +58,7 @@ select
 
     -- Annualized realized volatility over a 7-day rolling window
     round(
-        stddevPop(log_return) over (
+        stddevSamp(log_return) over (
             partition by exchange, symbol
             order by trade_date
             rows between 6 preceding and current row
@@ -67,7 +67,7 @@ select
 
     -- Annualized realized volatility over a 30-day rolling window
     round(
-        stddevPop(log_return) over (
+        stddevSamp(log_return) over (
             partition by exchange, symbol
             order by trade_date
             rows between 29 preceding and current row

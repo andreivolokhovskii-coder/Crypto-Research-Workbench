@@ -143,9 +143,10 @@ CREATE TABLE IF NOT EXISTS crypto.fact_candles
     price_change_pct   Float64,
     candle_range       Float64,
     is_bullish         UInt8,
-    _partition_date    Date         DEFAULT toDate(open_time)
+    _partition_date    Date         DEFAULT toDate(open_time),
+    ingested_at        DateTime     DEFAULT now()
 )
-ENGINE = ReplacingMergeTree()
+ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMM(_partition_date)
 ORDER BY (exchange, symbol, interval, open_time)
 SETTINGS index_granularity = 8192;
@@ -191,6 +192,30 @@ CREATE TABLE IF NOT EXISTS crypto.mart_volatility
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (exchange, symbol, interval, window_start)
+SETTINGS index_granularity = 8192;
+
+-- Mart: daily market regime per symbol (populated by Spark volatility_batch.py)
+-- Regime values: trending_up | trending_down | volatile | ranging
+CREATE TABLE IF NOT EXISTS crypto.mart_market_regime
+(
+    exchange         LowCardinality(String),
+    symbol           LowCardinality(String),
+    trade_date       DateTime,
+    day_open         Float64,
+    day_high         Float64,
+    day_low          Float64,
+    day_close        Float64,
+    day_volume       Float64,
+    log_return       Float64,
+    realized_vol_7d  Float64,
+    realized_vol_30d Float64,
+    atr_14           Float64,
+    regime           LowCardinality(String),
+    computed_at      DateTime     DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(computed_at)
+PARTITION BY toYYYYMM(trade_date)
+ORDER BY (exchange, symbol, trade_date)
 SETTINGS index_granularity = 8192;
 
 -- Mart: volume profile (populated by dbt)
