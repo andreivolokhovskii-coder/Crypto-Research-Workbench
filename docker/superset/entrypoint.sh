@@ -51,7 +51,7 @@ with app.app_context():
         db.session.commit()
         print(f"[init] Updated database connection: {db_name}")
 
-    # 2. Auto-create datasets for all tables
+    # 2. Auto-create datasets for all tables (schema=None — DB already set in URI)
     TABLES = [
         "bronze_klines", "bronze_coin_metadata", "bronze_trades",
         "silver_klines", "silver_coin_metadata",
@@ -62,14 +62,12 @@ with app.app_context():
     for table_name in TABLES:
         existing = db.session.query(SqlaTable).filter_by(
             database_id=database.id,
-            schema=name,
             table_name=table_name,
         ).first()
         if not existing:
             tbl = SqlaTable(
                 table_name=table_name,
                 database_id=database.id,
-                schema=name,
             )
             db.session.add(tbl)
             print(f"[init] Created dataset: {table_name}")
