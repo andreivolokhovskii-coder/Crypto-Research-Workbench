@@ -23,6 +23,12 @@ superset init
 # Auto-register ClickHouse DB and create datasets for all tables
 python3 - <<'PYEOF'
 import os
+
+# Explicitly register ClickHouse dialect — entry_points not always discovered
+from sqlalchemy.dialects import registry
+registry.register("clickhouse", "clickhouse_connect.cc_sqlalchemy.dialect", "ClickHouseDialect")
+registry.register("clickhouse.connect", "clickhouse_connect.cc_sqlalchemy.dialect", "ClickHouseDialect")
+
 from superset import create_app
 
 app = create_app()
