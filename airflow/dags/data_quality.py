@@ -24,13 +24,15 @@ DEFAULT_ARGS = {
     "email_on_failure": False,
 }
 
+import os as _os
+
 CH_ENV = {
     "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
-    "CLICKHOUSE_HOST":      "clickhouse",
-    "CLICKHOUSE_HTTP_PORT": "8123",
-    "CLICKHOUSE_DB":        "crypto",
-    "CLICKHOUSE_USER":      "crypto_user",
-    "CLICKHOUSE_PASSWORD":  "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
+    "CLICKHOUSE_HOST":      _os.environ.get("CLICKHOUSE_HOST",      "clickhouse"),
+    "CLICKHOUSE_HTTP_PORT": _os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
+    "CLICKHOUSE_DB":        _os.environ.get("CLICKHOUSE_DB",        "crypto"),
+    "CLICKHOUSE_USER":      _os.environ.get("CLICKHOUSE_USER",      "crypto_user"),
+    "CLICKHOUSE_PASSWORD":  _os.environ.get("CLICKHOUSE_PASSWORD",  ""),
 }
 
 FRESHNESS_SQL = """

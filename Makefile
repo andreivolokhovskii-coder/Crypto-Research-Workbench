@@ -54,8 +54,12 @@ deploy:
 	DOCKER_BUILDKIT=0 $(COMPOSE) up --build -d
 	@echo "Waiting for ClickHouse to be healthy..."
 	@until docker inspect workbench-clickhouse --format='{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do sleep 2; done
-	@echo "Loading historical data (30 days)..."
+	@echo "Waiting for MinIO buckets to be ready..."
+	@until docker inspect workbench-minio-init --format='{{.State.Status}}' 2>/dev/null | grep -qE 'exited|removing'; do sleep 2; done
+	@echo "Loading historical klines (30 days, 5 symbols)..."
 	$(COMPOSE) run --rm app python ingestion/historical/klines_backfill.py
+	@echo "Refreshing coin metadata (CoinGecko)..."
+	$(COMPOSE) run --rm app python ingestion/metadata/coingecko_dims.py || echo "  [warn] metadata refresh failed (CoinGecko rate-limit?) — dim_coin will be empty"
 	@echo "Installing dbt packages..."
 	$(COMPOSE) run --rm dbt dbt deps
 	@echo "Building dbt models..."
@@ -66,7 +70,7 @@ deploy:
 		--packages com.clickhouse:clickhouse-jdbc:0.6.5 \
 		--conf spark.executor.memory=1g \
 		--conf spark.driver.memory=512m \
-		/app/spark_jobs/volatility_batch.py || echo "  [warn] Spark job failed — mart_market_regime will be empty (run 'make spark-volatility' manually)"
+		/app/spark_jobs/volatility_batch.py || echo "  [warn] Spark job failed — run 'make spark-volatility' manually"
 	@echo ""
 	@echo "=========================================="
 	@echo " Stack is up. Service credentials:"

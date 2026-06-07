@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import os
+
 from airflow import DAG
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
@@ -49,12 +51,12 @@ with DAG(
             "spark.sql.session.timeZone": "UTC",
         },
         env_vars={
-            "CLICKHOUSE_HOST":     "clickhouse",
-            "CLICKHOUSE_HTTP_PORT":"8123",
-            "CLICKHOUSE_DB":       "crypto",
-            "CLICKHOUSE_USER":     "crypto_user",
-            "CLICKHOUSE_PASSWORD": "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
-            "SPARK_LOOKBACK_DAYS": "90",
+            "CLICKHOUSE_HOST":      os.environ.get("CLICKHOUSE_HOST",      "clickhouse"),
+            "CLICKHOUSE_HTTP_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
+            "CLICKHOUSE_DB":        os.environ.get("CLICKHOUSE_DB",        "crypto"),
+            "CLICKHOUSE_USER":      os.environ.get("CLICKHOUSE_USER",      "crypto_user"),
+            "CLICKHOUSE_PASSWORD":  os.environ.get("CLICKHOUSE_PASSWORD",  ""),
+            "SPARK_LOOKBACK_DAYS":  "90",
         },
         name="volatility_batch",
         verbose=False,

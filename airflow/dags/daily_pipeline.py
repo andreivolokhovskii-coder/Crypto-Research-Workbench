@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import os
+
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.utils.trigger_rule import TriggerRule
@@ -25,17 +27,17 @@ DEFAULT_ARGS = {
 
 COMMON_ENV = {
     "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
-    "CLICKHOUSE_HOST":      "clickhouse",
-    "CLICKHOUSE_HTTP_PORT": "8123",
-    "CLICKHOUSE_DB":        "crypto",
-    "CLICKHOUSE_USER":      "crypto_user",
-    "CLICKHOUSE_PASSWORD":  "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
-    "S3_ENDPOINT":          "http://minio:9000",
-    "AWS_ACCESS_KEY_ID":    "minioadmin",
-    "AWS_SECRET_ACCESS_KEY":"{{ var.value.get('MINIO_ROOT_PASSWORD', 'minioadmin') }}",
-    "MINIO_BUCKET_BRONZE":  "bronze",
-    "MINIO_BUCKET_SILVER":  "silver",
-    "LOG_LEVEL":            "INFO",
+    "CLICKHOUSE_HOST":      os.environ.get("CLICKHOUSE_HOST",      "clickhouse"),
+    "CLICKHOUSE_HTTP_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
+    "CLICKHOUSE_DB":        os.environ.get("CLICKHOUSE_DB",        "crypto"),
+    "CLICKHOUSE_USER":      os.environ.get("CLICKHOUSE_USER",      "crypto_user"),
+    "CLICKHOUSE_PASSWORD":  os.environ.get("CLICKHOUSE_PASSWORD",  ""),
+    "S3_ENDPOINT":          os.environ.get("S3_ENDPOINT",          "http://minio:9000"),
+    "AWS_ACCESS_KEY_ID":    os.environ.get("AWS_ACCESS_KEY_ID",    "minioadmin"),
+    "AWS_SECRET_ACCESS_KEY":os.environ.get("AWS_SECRET_ACCESS_KEY",""),
+    "MINIO_BUCKET_BRONZE":  os.environ.get("MINIO_BUCKET_BRONZE",  "bronze"),
+    "MINIO_BUCKET_SILVER":  os.environ.get("MINIO_BUCKET_SILVER",  "silver"),
+    "LOG_LEVEL":            os.environ.get("LOG_LEVEL",            "INFO"),
     "PYTHONUNBUFFERED":     "1",
 }
 
@@ -91,11 +93,11 @@ with DAG(
         ),
         env={
             "PATH":                 "/home/airflow/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "CLICKHOUSE_HOST":      "clickhouse",
-            "CLICKHOUSE_HTTP_PORT": "8123",
-            "CLICKHOUSE_DB":        "crypto",
-            "CLICKHOUSE_USER":      "crypto_user",
-            "CLICKHOUSE_PASSWORD":  "{{ var.value.get('CLICKHOUSE_PASSWORD', '') }}",
+            "CLICKHOUSE_HOST":      os.environ.get("CLICKHOUSE_HOST",      "clickhouse"),
+            "CLICKHOUSE_HTTP_PORT": os.environ.get("CLICKHOUSE_HTTP_PORT", "8123"),
+            "CLICKHOUSE_DB":        os.environ.get("CLICKHOUSE_DB",        "crypto"),
+            "CLICKHOUSE_USER":      os.environ.get("CLICKHOUSE_USER",      "crypto_user"),
+            "CLICKHOUSE_PASSWORD":  os.environ.get("CLICKHOUSE_PASSWORD",  ""),
         },
     )
 

@@ -295,6 +295,7 @@ services:
       - -c
       - |
         airflow db migrate
+
         airflow users create \
           --username "${AIRFLOW_ADMIN_USERNAME}" \
           --password "${AIRFLOW_ADMIN_PASSWORD}" \
@@ -302,14 +303,29 @@ services:
           --lastname "${AIRFLOW_ADMIN_LASTNAME}" \
           --role Admin \
           --email "${AIRFLOW_ADMIN_EMAIL}" || true
+
+        # Seed Variables so DAG Jinja templates resolve passwords correctly.
+        # DAGs use {{ var.value.get('CLICKHOUSE_PASSWORD', '') }} — without seeding
+        # they resolve to empty string and every task fails with auth errors.
+        airflow variables set CLICKHOUSE_PASSWORD "${CLICKHOUSE_PASSWORD}" || true
+        airflow variables set MINIO_ROOT_PASSWORD  "${MINIO_ROOT_PASSWORD}"  || true
+
+        # Create Spark connection required by the spark_batch DAG.
+        # Without this, SparkSubmitOperator raises "Cannot find conn_id=spark_default".
+        airflow connections add spark_default \
+          --conn-type spark \
+          --conn-host "spark://spark-master" \
+          --conn-port 7077 || true
+
         echo "Airflow init complete."
     environment:
       <<: *airflow-env
-      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
-      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_ADMIN_USERNAME:  ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD:  ${AIRFLOW_ADMIN_PASSWORD:-admin}
       AIRFLOW_ADMIN_FIRSTNAME: ${AIRFLOW_ADMIN_FIRSTNAME:-Admin}
-      AIRFLOW_ADMIN_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME:-User}
-      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
+      AIRFLOW_ADMIN_LASTNAME:  ${AIRFLOW_ADMIN_LASTNAME:-User}
+      AIRFLOW_ADMIN_EMAIL:     ${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
+      MINIO_ROOT_PASSWORD:     ${MINIO_ROOT_PASSWORD}
     restart: on-failure
 
   # -------------------------------------------------------------------------
