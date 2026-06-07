@@ -24,11 +24,6 @@ superset init
 python3 - <<'PYEOF'
 import os
 
-# Explicitly register ClickHouse dialect — entry_points not always discovered
-from sqlalchemy.dialects import registry
-registry.register("clickhouse", "clickhouse_connect.cc_sqlalchemy.dialect", "ClickHouseDialect")
-registry.register("clickhouse.connect", "clickhouse_connect.cc_sqlalchemy.dialect", "ClickHouseDialect")
-
 from superset import create_app
 
 app = create_app()
@@ -43,7 +38,7 @@ with app.app_context():
     host = os.environ.get("CLICKHOUSE_HOST", "clickhouse")
     port = os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")
     name = os.environ.get("CLICKHOUSE_DB", "crypto")
-    uri  = f"clickhouse+connect://{user}:{pw}@{host}:{port}/{name}"
+    uri  = f"clickhouse+http://{user}:{pw}@{host}:{port}/{name}"
 
     db_name = "ClickHouse"
     database = db.session.query(Database).filter_by(database_name=db_name).first()
