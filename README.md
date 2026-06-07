@@ -23,17 +23,19 @@ One command brings up the full stack; data starts flowing within seconds.
 ## Quick start
 
 ```bash
-git clone https://github.com/Andrei-info/crypto-research-workbench
-cd crypto-research-workbench
+git clone https://github.com/andreivolokhovskii-coder/Crypto-Research-Workbench
+cd Crypto-Research-Workbench
+make deploy          # generates secrets, builds images, starts all services
+```
 
-cp .env.example .env      # adjust passwords if needed
-docker compose up -d      # pull + start all services (~3 min first run)
+`make deploy` generates all passwords automatically and prints them once — no manual `.env` editing needed. First run takes ~3 minutes to pull and build images.
 
+```bash
 # Load 30 days of historical data
-docker compose run --rm app python ingestion/historical/klines_backfill.py
+make backfill
 
 # Build analytical models
-docker compose run --rm dbt sh -c "dbt deps && dbt build"
+make dbt-build
 
 # Start live streaming
 docker compose up -d ws-producer stream-consumer
