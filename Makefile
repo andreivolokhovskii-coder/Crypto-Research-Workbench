@@ -53,11 +53,17 @@ deploy:
 	@bash setup.sh
 	DOCKER_BUILDKIT=0 $(COMPOSE) up --build -d
 	@echo ""
-	@echo "Stack is starting. It may take 1-2 minutes for all services to be ready."
-	@echo "  Airflow:   http://localhost:8080"
-	@echo "  Superset:  http://localhost:8088"
-	@echo "  Jupyter:   http://localhost:8888"
-	@echo "  MinIO:     http://localhost:9002"
+	@echo "=========================================="
+	@echo " Stack is up. Service credentials:"
+	@echo "=========================================="
+	@echo " Airflow:  http://localhost:8080"
+	@echo "   login:  admin / $$(grep AIRFLOW_ADMIN_PASSWORD .env | cut -d= -f2)"
+	@echo " Superset: http://localhost:8088"
+	@echo "   login:  admin / $$(grep SUPERSET_ADMIN_PASSWORD .env | cut -d= -f2)"
+	@echo " MinIO:    http://localhost:9002"
+	@echo "   login:  minioadmin / $$(grep MINIO_ROOT_PASSWORD .env | cut -d= -f2)"
+	@echo " Jupyter:  http://localhost:8888  (no auth)"
+	@echo "=========================================="
 
 .PHONY: setup
 setup:
