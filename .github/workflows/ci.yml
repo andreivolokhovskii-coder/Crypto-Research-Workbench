@@ -27,6 +27,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test deps
-        run: pip install pytest pytest-cov
+        run: pip install pytest pytest-cov pydantic
       - name: Run unit tests
         run: pytest tests/unit/ -v --tb=short --cov=ingestion --cov-report=term-missing

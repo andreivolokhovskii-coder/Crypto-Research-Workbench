@@ -22,7 +22,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 
 import clickhouse_connect
-from confluent_kafka import Consumer, KafkaError
+from confluent_kafka import Consumer, KafkaError, Producer as KafkaProducer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -48,6 +48,9 @@ CH_PORT      = int(os.getenv("CLICKHOUSE_HTTP_PORT", "8123"))
 CH_DB        = os.getenv("CLICKHOUSE_DB",            "crypto")
 CH_USER      = os.getenv("CLICKHOUSE_USER",          "crypto_user")
 CH_PASSWORD  = os.getenv("CLICKHOUSE_PASSWORD",      "")
+
+TOPIC_DLQ        = os.getenv("KAFKA_TOPIC_KLINES_DLQ", "klines.dlq")
+MAX_FLUSH_RETRIES = 3   # attempts before routing buffered records to DLQ
 
 BATCH_SIZE   = 50     # flush to ClickHouse every N closed candles
 FLUSH_EVERY  = 10.0   # or every N seconds, whichever comes first
@@ -89,6 +92,27 @@ class RollingStats:
 # ---------------------------------------------------------------------------
 # ClickHouse helpers
 # ---------------------------------------------------------------------------
+
+def make_dlq_producer() -> KafkaProducer:
+    return KafkaProducer({"bootstrap.servers": KAFKA_BOOTSTRAP, "acks": "1"})
+
+
+def send_to_dlq(producer: KafkaProducer, raw: bytes, reason: str, error: str) -> None:
+    """Forward an unprocessable message to the dead-letter queue for forensics."""
+    import base64
+    payload = json.dumps({
+        "reason":   reason,
+        "error":    error,
+        "raw_b64":  base64.b64encode(raw).decode(),
+        "topic":    TOPIC_KLINES,
+        "ts_utc":   datetime.now(timezone.utc).isoformat(),
+    }).encode()
+    try:
+        producer.produce(TOPIC_DLQ, value=payload)
+        producer.poll(0)
+    except Exception as exc:
+        log.error("Failed to write to DLQ (message lost permanently): %s", exc)
+
 
 def ch_client() -> clickhouse_connect.driver.Client:
     return clickhouse_connect.get_client(
@@ -224,8 +248,9 @@ def main() -> None:
     })
     consumer.subscribe([TOPIC_KLINES])
 
-    ch     = ch_client()
-    stats  = RollingStats()
+    ch           = ch_client()
+    dlq_producer = make_dlq_producer()
+    stats        = RollingStats()
     latest_buf: list[dict] = []   # all ticks for rt_latest_kline
     closed_buf: list[dict] = []   # closed candles for bronze + silver
     signal_buf: list[dict] = []
@@ -245,9 +270,12 @@ def main() -> None:
                 if msg.error().code() != KafkaError._PARTITION_EOF:
                     log.error("Kafka error: %s", msg.error())
             else:
+                raw_bytes = msg.value()
                 try:
-                    record = json.loads(msg.value().decode())
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                    record = json.loads(raw_bytes.decode())
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    log.warning("Undecodable message — routing to DLQ: %s", exc)
+                    send_to_dlq(dlq_producer, raw_bytes, "decode_error", str(exc))
                     continue
 
                 latest_buf.append(record)
@@ -267,32 +295,58 @@ def main() -> None:
             should_flush = len(closed_buf) >= BATCH_SIZE or elapsed >= FLUSH_EVERY
 
             if should_flush and (latest_buf or closed_buf):
-                try:
-                    upsert_latest(ch, latest_buf)
-                    insert_bronze(ch,  closed_buf)
-                    insert_silver(ch,  closed_buf)
-                    if signal_buf:
-                        insert_signals(ch, signal_buf)
-                        for s in signal_buf:
-                            log.info("SIGNAL [%s] %s  value=%.3f  %s",
-                                     s["signal_type"], s["symbol"],
-                                     s["value"], s["description"])
+                for attempt in range(MAX_FLUSH_RETRIES):
+                    try:
+                        upsert_latest(ch, latest_buf)
+                        insert_bronze(ch,  closed_buf)
+                        insert_silver(ch,  closed_buf)
+                        if signal_buf:
+                            insert_signals(ch, signal_buf)
+                            for s in signal_buf:
+                                log.info("SIGNAL [%s] %s  value=%.3f  %s",
+                                         s["signal_type"], s["symbol"],
+                                         s["value"], s["description"])
 
-                    log.info("Flushed  ticks=%d  closed=%d  signals=%d  "
-                             "(total ticks=%d closed=%d)",
-                             len(latest_buf), len(closed_buf), len(signal_buf),
-                             total_msgs, total_closed)
+                        log.info("Flushed  ticks=%d  closed=%d  signals=%d  "
+                                 "(total ticks=%d closed=%d)",
+                                 len(latest_buf), len(closed_buf), len(signal_buf),
+                                 total_msgs, total_closed)
 
-                    # Commit offsets only after all inserts succeeded.
-                    # On failure we keep the buffers intact and retry next cycle
-                    # — duplicates in ClickHouse are tolerable (RMT dedupes),
-                    # but losing messages is not.
-                    consumer.commit(asynchronous=False)
-                    latest_buf.clear()
-                    closed_buf.clear()
-                    signal_buf.clear()
-                except Exception as e:
-                    log.error("Flush failed (will retry next cycle): %s", e)
+                        # Commit offsets only after all inserts succeeded.
+                        # Delivery guarantee: at-least-once. Duplicates are
+                        # idempotently deduplicated by ReplacingMergeTree.
+                        consumer.commit(asynchronous=False)
+                        latest_buf.clear()
+                        closed_buf.clear()
+                        signal_buf.clear()
+                        break
+
+                    except Exception as exc:
+                        if attempt < MAX_FLUSH_RETRIES - 1:
+                            wait = 2 ** attempt
+                            log.warning(
+                                "Flush attempt %d/%d failed: %s — retrying in %ds",
+                                attempt + 1, MAX_FLUSH_RETRIES, exc, wait,
+                            )
+                            time.sleep(wait)
+                        else:
+                            # All retries exhausted — route buffered closed candles
+                            # to DLQ so they are not silently lost.
+                            log.error(
+                                "Flush exhausted %d retries — routing %d records to DLQ",
+                                MAX_FLUSH_RETRIES, len(closed_buf),
+                            )
+                            for rec in closed_buf:
+                                send_to_dlq(
+                                    dlq_producer,
+                                    json.dumps(rec).encode(),
+                                    "flush_failed_exhausted",
+                                    str(exc),
+                                )
+                            consumer.commit(asynchronous=False)
+                            latest_buf.clear()
+                            closed_buf.clear()
+                            signal_buf.clear()
 
                 last_flush = time.monotonic()
 
@@ -300,6 +354,7 @@ def main() -> None:
         log.info("Shutting down …")
     finally:
         consumer.close()
+        dlq_producer.flush(timeout=5)
         log.info("Consumer closed.")
 
 

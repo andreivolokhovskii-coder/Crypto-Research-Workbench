@@ -1,6 +1,9 @@
 """Unit tests for ws_producer.py — pure functions, no I/O."""
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from ingestion.realtime.ws_producer import _normalize_symbol, parse_kline
 
 
@@ -101,9 +104,18 @@ def test_parse_kline_empty_message_returns_none():
     assert parse_kline({}) is None
 
 
-def test_parse_kline_missing_k_returns_none():
-    msg = {"data": {"e": "kline"}}
-    assert parse_kline(msg) is None
+def test_parse_kline_missing_k_raises_validation_error():
+    # kline event with missing 'k' payload violates the Pydantic contract
+    msg = {"data": {"e": "kline", "E": 1_700_000_000_000}}
+    with pytest.raises(ValidationError):
+        parse_kline(msg)
+
+
+def test_parse_kline_wrong_field_type_raises_validation_error():
+    msg = _make_kline_msg()
+    msg["data"]["k"]["o"] = "not-a-number"
+    with pytest.raises(ValidationError):
+        parse_kline(msg)
 
 
 def test_parse_kline_timestamps_are_ints():

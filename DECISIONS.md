@@ -907,3 +907,263 @@ The selected decisions aim to ensure that it is:
 - strong as an engineering case,
 - understandable as a system,
 - and extensible as a public project.
+
+---
+
+# Engineering ADRs
+
+The following ADRs cover implementation-level decisions about delivery semantics,
+error handling, data contracts, and compute placement. They are distinct from the
+product-level ADRs above: where those answer *what to build*, these answer
+*how the internals must behave* and *why*.
+
+---
+
+# ADR-E01 — At-least-once delivery with ReplacingMergeTree deduplication
+
+## Status
+Accepted
+
+## Context
+The WebSocket producer and Kafka consumer form an unbuffered streaming path.
+Two failure modes threatened data correctness:
+
+1. **Silent loss** — if the consumer committed Kafka offsets before a ClickHouse
+   insert succeeded, a process crash between commit and insert would advance the
+   offset past unwritten records with no signal.
+2. **Duplicates** — if the process crashed after insert but before commit, the
+   same record would be re-consumed and re-inserted on restart.
+
+Choosing between exactly-once semantics and at-least-once involves a real
+trade-off: exactly-once (e.g. Kafka transactions + idempotent producer) adds
+significant broker and consumer complexity and requires producer, broker, and
+consumer to coordinate transactionally.
+
+## Decision
+Adopt **at-least-once delivery** in the consumer:
+- `enable.auto.commit: False` — offsets are never advanced automatically.
+- Offsets are committed with `consumer.commit(asynchronous=False)` only after
+  all ClickHouse inserts in the batch have succeeded (or after the batch has
+  been routed to the DLQ on exhausted retries).
+- Duplicates are accepted as possible and resolved at the storage layer:
+  `silver_klines` and `fact_candles` use **ReplacingMergeTree** with a version
+  column (`ingested_at`), which deduplicates rows with the same primary key
+  on background merges (and immediately with `SELECT ... FINAL`).
+
+## Why
+- At-least-once + RMT deduplication is simpler than exactly-once and matches
+  the query pattern: analytical queries always use `FINAL` or are tolerant of
+  temporary duplicates.
+- RMT deduplication is zero-cost at write time and runs asynchronously;
+  the `FINAL` keyword forces deduplication at read time when consistency matters.
+
+## Alternatives Considered
+### Option A — Kafka transactions (exactly-once)
+Pros: no duplicates ever.  
+Cons: requires idempotent producer config, transactional consumer group, and
+broker-side coordination. Adds ~3× complexity for a gain that RMT already
+provides at the read layer.
+
+### Option B — auto-commit (fire-and-forget)
+Pros: zero code.  
+Cons: any process crash between commit and insert silently drops data with no
+way to recover.
+
+## Consequences
+- All ingestion code must never commit before a successful flush.
+- ClickHouse DDL must use `ReplacingMergeTree(version_col)`.
+- Queries on `silver_klines` and `fact_candles` must include `FINAL` or
+  accept transient duplicates in analytical aggregations.
+
+---
+
+# ADR-E02 — Dead-letter queue for unprocessable messages
+
+## Status
+Accepted
+
+## Context
+Two classes of messages cannot be processed by the consumer/producer:
+
+1. **Decode errors** — the raw bytes from Kafka or WebSocket are not valid JSON,
+   or the UTF-8 decoding fails.
+2. **Schema violations** — the JSON is valid but missing required fields or
+   contains wrong types (e.g. a non-numeric price field).
+
+Prior to this ADR, both classes were silently `continue`d (dropped). Silent
+drops are the worst failure mode in a data pipeline: there is no record that
+the event ever arrived, forensics are impossible, and the operator has no way
+to know whether the data gap is a market gap or a processing bug.
+
+## Decision
+Route all unprocessable messages to a **dead-letter topic** (`klines.dlq`)
+instead of dropping them:
+
+```
+{
+  "reason":   "schema_validation_error" | "json_decode_error" | "flush_failed_exhausted",
+  "error":    "<exception message>",
+  "raw_b64":  "<base64-encoded original bytes>",
+  "topic":    "klines.raw",
+  "ts_utc":   "<ISO-8601 UTC timestamp>"
+}
+```
+
+DLQ writes are best-effort: if the DLQ producer itself fails, the error is
+logged at ERROR level with the explicit note "message lost permanently". This
+is intentional — the DLQ producer should not crash the main pipeline.
+
+The DLQ is also used as the final fallback when ClickHouse flush retries are
+exhausted (`MAX_FLUSH_RETRIES=3`, exponential backoff `2^attempt` seconds).
+In that case the closed candles in the batch are individually serialised to
+the DLQ before the offset is committed, preserving the data for manual replay.
+
+## Why
+- A DLQ makes silent data loss visible: operators can count `klines.dlq`
+  messages, inspect the raw payload, and replay after fixing a bug.
+- The base64 encoding of the original bytes means the full original event is
+  always preserved, regardless of whether the failure was at decode or schema
+  validation.
+- Best-effort DLQ (log on failure, don't crash) is the right trade-off: a
+  DLQ producer failure should not take down the main consumer.
+
+## Alternatives Considered
+### Option A — Log and discard
+Pros: simplest.  
+Cons: data is permanently lost; no forensics; operator has no signal.
+
+### Option B — Pause consumer until message is resolved
+Pros: zero data loss.  
+Cons: one bad message blocks the entire pipeline; unacceptable for a streaming
+system where bad messages can arrive at any time.
+
+## Consequences
+- `klines.dlq` topic must be created in Kafka before consumers start.
+- A monitoring alert on `klines.dlq` message rate is the recommended
+  operational follow-up (not yet implemented).
+- Both `klines_consumer.py` and `ws_producer.py` maintain a DLQ producer
+  instance for the lifetime of the process.
+
+---
+
+# ADR-E03 — Pydantic data contracts at the WebSocket boundary
+
+## Status
+Accepted
+
+## Context
+`ws_producer.py` receives arbitrary JSON from the Binance WebSocket API.
+Before this ADR, `parse_kline` accessed fields with raw dict operations
+(`k["o"]`, `float(k["v"])`, etc.) wrapped in a broad `except (KeyError, ValueError, TypeError)`.
+This meant:
+
+- Schema drift (e.g. Binance renaming or removing a field) produced a silent
+  `return None` with a DEBUG-level log line.
+- There was no machine-readable definition of "what a valid kline event looks
+  like" — the contract lived only in the exception handler.
+- Tests had to fabricate full dicts and check that no exception was raised,
+  rather than testing the contract directly.
+
+## Decision
+Introduce **Pydantic v2 models** (`_KlinePayload`, `_KlineEvent`) that express
+the expected Binance WebSocket kline schema as typed Python classes.
+`parse_kline` calls `_KlineEvent.model_validate(data)`, which raises
+`ValidationError` on any schema mismatch.
+
+The caller (`stream()`) catches `ValidationError` and routes the message to
+the DLQ (see ADR-E02). Non-kline events (e.g. `"e": "trade"`) are still
+silently skipped — they are not errors.
+
+`model_config = {"extra": "ignore"}` allows Binance to add new fields to the
+envelope without breaking the contract; only the fields we explicitly model
+are validated.
+
+## Why
+- `ValidationError` is specific and testable; a broad except clause is not.
+- Pydantic coerces string-encoded numbers (Binance sends prices as strings)
+  to `float`/`int` automatically, eliminating the manual `float(k["o"])` casts.
+- The model classes serve as living documentation: a reader can see exactly
+  which fields the producer depends on, with types, without reading the
+  parsing logic.
+
+## Alternatives Considered
+### Option A — Keep dict access with broad except
+Pros: no extra dependency.  
+Cons: schema drift is invisible; no machine-readable contract; hard to test
+specific field failures.
+
+### Option B — JSON Schema validation (jsonschema library)
+Pros: language-agnostic schema.  
+Cons: more verbose; doesn't give typed access to fields; requires separate
+schema file to maintain.
+
+## Consequences
+- `pydantic` is a runtime dependency of `ws_producer.py` (added to CI install).
+- Any change to the Binance kline schema requires updating `_KlinePayload`
+  first; the test suite will catch missing or renamed fields immediately.
+- Tests should verify that schema violations raise `ValidationError`, not
+  that they return `None`.
+
+---
+
+# ADR-E04 — PySpark for complex window aggregations vs ClickHouse SQL
+
+## Status
+Accepted
+
+## Context
+The `mart_market_regime` table requires multi-step aggregation logic:
+1. Daily OHLCV from tick data.
+2. Log returns over daily close prices.
+3. Rolling volatility (7-day and 30-day windows) over log returns.
+4. Average True Range (14-day) — a technical indicator involving per-row
+   high/low/close and a trailing rolling mean.
+5. 20-day simple moving average of close.
+6. Regime classification (trending_up / trending_down / volatile / ranging)
+   based on multiple thresholds applied to the above signals.
+
+ClickHouse SQL can express all of this, but the query becomes a 100+ line
+chain of CTEs with window functions, and ClickHouse's window function support
+(particularly for ordered frames with `ROWS BETWEEN`) is less mature than
+Spark's and is not available on older versions of ClickHouse.
+
+## Decision
+Implement the market regime batch job as a **PySpark job** (`spark_jobs/volatility_batch.py`),
+scheduled via Airflow `SparkSubmitOperator` every 6 hours.
+
+The job:
+- Reads from `silver_klines` via JDBC (ClickHouse HTTP port, `clickhouse-jdbc` driver).
+- Performs all window aggregations in Spark (native `Window.partitionBy(...).orderBy(...)`).
+- Writes results to `mart_market_regime` via JDBC INSERT.
+
+## Why
+- Spark's window function API is mature, well-documented, and easy to test
+  with PySpark unit tests.
+- The 6-hour schedule means batch latency is acceptable; there is no need for
+  a streaming aggregation.
+- Keeping complex multi-step logic in Python (with type annotations and unit
+  tests) is easier to maintain and review than equivalent ClickHouse SQL.
+
+## Alternatives Considered
+### Option A — Pure ClickHouse SQL CTE chain
+Pros: no additional infrastructure; results are queryable immediately.  
+Cons: ClickHouse window function support has gaps; a 5-CTE query is harder
+to unit test and debug than a PySpark job.
+
+### Option B — dbt model in ClickHouse
+Pros: consistent with the existing dbt layer.  
+Cons: same window function limitations; dbt materialisation strategies for
+ClickHouse are less mature than for Postgres/BigQuery.
+
+## Trade-offs Accepted
+- Spark adds infrastructure overhead (spark-master + spark-worker containers).
+- JDBC reads are slower than native ClickHouse reads; acceptable for a 6-hour
+  batch over millions of rows, not acceptable for a real-time query.
+- The Airflow `spark_default` connection must be configured manually; this
+  step is documented in the README but is an extra onboarding step.
+
+## Consequences
+- `docker-compose.yml` includes `spark-master` and `spark-worker` services.
+- `spark_jobs/` is mounted read-only into the spark-master container.
+- The `mart_market_regime` ClickHouse table must exist before the first
+  Spark job run (DDL in `clickhouse/ddl/01_init.sql`).

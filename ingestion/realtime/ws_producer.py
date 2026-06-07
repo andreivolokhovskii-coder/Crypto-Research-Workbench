@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 import websockets
 from confluent_kafka import Producer
 from dotenv import load_dotenv
+from pydantic import BaseModel, ValidationError
 
 load_dotenv()
 
@@ -43,6 +44,8 @@ TOPIC_KLINES     = os.getenv("KAFKA_TOPIC_KLINES_RAW",  "klines.raw")
 EXCHANGE_ID      = os.getenv("DEFAULT_EXCHANGE",         "binance")
 SYMBOLS_ENV      = os.getenv("DEFAULT_SYMBOLS",          "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT")
 INTERVAL         = os.getenv("DEFAULT_KLINE_INTERVAL",   "1m")
+
+TOPIC_DLQ        = os.getenv("KAFKA_TOPIC_KLINES_DLQ",  "klines.dlq")
 
 BINANCE_WS_BASE  = "wss://stream.binance.com:9443/stream"
 RECONNECT_DELAY  = 5   # seconds between reconnect attempts
@@ -65,6 +68,51 @@ def make_producer() -> Producer:
 def delivery_report(err, msg):
     if err:
         log.warning("Delivery failed for %s: %s", msg.key(), err)
+
+
+def _send_to_dlq(producer: Producer, raw: bytes, reason: str, error: str) -> None:
+    """Forward an unprocessable WebSocket message to the dead-letter topic."""
+    import base64
+    from datetime import datetime, timezone
+    payload = json.dumps({
+        "reason":   reason,
+        "error":    error,
+        "raw_b64":  base64.b64encode(raw).decode(),
+        "topic":    TOPIC_KLINES,
+        "ts_utc":   datetime.now(timezone.utc).isoformat(),
+    }).encode()
+    try:
+        producer.produce(TOPIC_DLQ, value=payload)
+        producer.poll(0)
+    except Exception as exc:
+        log.error("Failed to write to DLQ (message lost permanently): %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Data contract — Pydantic models for Binance WebSocket kline schema
+# ---------------------------------------------------------------------------
+
+class _KlinePayload(BaseModel):
+    s: str    # symbol (e.g. "BTCUSDT")
+    i: str    # interval
+    t: int    # open_time ms
+    T: int    # close_time ms
+    o: float  # open
+    h: float  # high
+    l: float  # low   # noqa: E741
+    c: float  # close
+    v: float  # volume
+    q: float  # quote_volume
+    n: int    # trade_count
+    x: bool   # is_closed
+    model_config = {"extra": "ignore"}
+
+
+class _KlineEvent(BaseModel):
+    e: str           # event type — expected "kline"
+    E: int           # event time ms
+    k: _KlinePayload
+    model_config = {"extra": "ignore"}
 
 
 # ---------------------------------------------------------------------------
@@ -90,38 +138,39 @@ def _normalize_symbol(raw: str) -> str:
 
 
 def parse_kline(msg: dict) -> dict | None:
-    """Parse Binance kline stream message into a unified record."""
-    try:
-        data = msg.get("data", {})
-        if data.get("e") != "kline":
-            return None
-        k = data["k"]
-        return {
-            "exchange":    EXCHANGE_ID,
-            "symbol":      _normalize_symbol(k["s"]),
-            "interval":    k["i"],
-            "open_time":   int(k["t"]),
-            "close_time":  int(k["T"]),
-            "open":        float(k["o"]),
-            "high":        float(k["h"]),
-            "low":         float(k["l"]),
-            "close":       float(k["c"]),
-            "volume":      float(k["v"]),
-            "quote_volume":float(k["q"]),
-            "trade_count": int(k["n"]),
-            "is_closed":   bool(k["x"]),
-            "ts":          int(data["E"]),
-        }
-    except (KeyError, ValueError, TypeError) as e:
-        log.debug("Parse error: %s — raw=%s", e, str(msg)[:120])
+    """Parse Binance kline stream message into a unified record.
+
+    Returns None for non-kline events (normal, silent skip).
+    Raises ValidationError if the event is a kline but schema is wrong.
+    """
+    data = msg.get("data", {})
+    if data.get("e") != "kline":
         return None
+    event = _KlineEvent.model_validate(data)
+    k = event.k
+    return {
+        "exchange":     EXCHANGE_ID,
+        "symbol":       _normalize_symbol(k.s),
+        "interval":     k.i,
+        "open_time":    k.t,
+        "close_time":   k.T,
+        "open":         k.o,
+        "high":         k.h,
+        "low":          k.l,
+        "close":        k.c,
+        "volume":       k.v,
+        "quote_volume": k.q,
+        "trade_count":  k.n,
+        "is_closed":    k.x,
+        "ts":           event.E,
+    }
 
 
 # ---------------------------------------------------------------------------
 # WebSocket loop
 # ---------------------------------------------------------------------------
 
-async def stream(producer: Producer, symbols: list[str], interval: str) -> None:
+async def stream(producer: Producer, dlq_producer: Producer, symbols: list[str], interval: str) -> None:
     streams = "/".join(f"{s.lower()}@kline_{interval}" for s in symbols)
     url = f"{BINANCE_WS_BASE}?streams={streams}"
     log.info("Connecting to: %s", url)
@@ -130,12 +179,21 @@ async def stream(producer: Producer, symbols: list[str], interval: str) -> None:
     async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
         log.info("Connected — streaming %d symbols @ %s", len(symbols), interval)
         async for raw in ws:
+            raw_bytes = raw.encode() if isinstance(raw, str) else raw
             try:
                 msg = json.loads(raw)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                log.warning("JSON decode error — routing to DLQ: %s", exc)
+                _send_to_dlq(dlq_producer, raw_bytes, "json_decode_error", str(exc))
                 continue
 
-            record = parse_kline(msg)
+            try:
+                record = parse_kline(msg)
+            except ValidationError as exc:
+                log.warning("Schema validation failed — routing to DLQ: %s", exc)
+                _send_to_dlq(dlq_producer, raw_bytes, "schema_validation_error", str(exc))
+                continue
+
             if record is None:
                 continue
 
@@ -154,11 +212,11 @@ async def stream(producer: Producer, symbols: list[str], interval: str) -> None:
                          msg_count, record["symbol"], record["close"], record["is_closed"])
 
 
-async def run_with_reconnect(producer: Producer, symbols: list[str], interval: str) -> None:
+async def run_with_reconnect(producer: Producer, dlq_producer: Producer, symbols: list[str], interval: str) -> None:
     """Reconnect loop — keeps the producer alive despite transient WS errors."""
     while True:
         try:
-            await stream(producer, symbols, interval)
+            await stream(producer, dlq_producer, symbols, interval)
         except (websockets.ConnectionClosed, OSError, asyncio.TimeoutError) as e:
             log.warning("WebSocket disconnected: %s — reconnecting in %ds", e, RECONNECT_DELAY)
         except Exception as e:
@@ -185,14 +243,16 @@ def main() -> None:
     log.info("ws_producer starting  symbols=%s  interval=%s  kafka=%s  topic=%s",
              syms, args.interval, KAFKA_BOOTSTRAP, TOPIC_KLINES)
 
-    producer = make_producer()
+    producer     = make_producer()
+    dlq_producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP, "acks": "1"})
     try:
-        asyncio.run(run_with_reconnect(producer, syms, args.interval))
+        asyncio.run(run_with_reconnect(producer, dlq_producer, syms, args.interval))
     except KeyboardInterrupt:
         log.info("Shutting down …")
     finally:
         producer.flush(timeout=10)
-        log.info("Kafka producer flushed. Bye.")
+        dlq_producer.flush(timeout=5)
+        log.info("Kafka producers flushed. Bye.")
 
 
 if __name__ == "__main__":
