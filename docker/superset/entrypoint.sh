@@ -24,11 +24,12 @@ superset init
 python3 - <<'PYEOF'
 import os
 from superset import create_app
-from superset.extensions import db
-from superset.models.core import Database
 
 app = create_app()
 with app.app_context():
+    from superset.extensions import db
+    from superset.models.core import Database
+
     db_name = "ClickHouse"
     existing = db.session.query(Database).filter_by(database_name=db_name).first()
     user = os.environ.get("CLICKHOUSE_USER", "crypto_user")
