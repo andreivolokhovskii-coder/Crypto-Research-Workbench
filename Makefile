@@ -52,6 +52,14 @@ help:
 deploy:
 	@bash setup.sh
 	DOCKER_BUILDKIT=0 $(COMPOSE) up --build -d
+	@echo "Waiting for ClickHouse to be healthy..."
+	@until docker inspect workbench-clickhouse --format='{{.State.Health.Status}}' 2>/dev/null | grep -q healthy; do sleep 2; done
+	@echo "Loading historical data (30 days)..."
+	$(COMPOSE) run --rm app python ingestion/historical/klines_backfill.py
+	@echo "Installing dbt packages..."
+	$(COMPOSE) run --rm dbt dbt deps
+	@echo "Building dbt models..."
+	$(COMPOSE) run --rm dbt dbt build
 	@echo ""
 	@echo "=========================================="
 	@echo " Stack is up. Service credentials:"
