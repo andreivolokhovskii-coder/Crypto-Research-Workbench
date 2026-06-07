@@ -51,7 +51,7 @@ help:
 .PHONY: deploy
 deploy:
 	@bash setup.sh
-	$(COMPOSE) up --build -d
+	DOCKER_BUILDKIT=0 $(COMPOSE) up --build -d
 	@echo ""
 	@echo "Stack is starting. It may take 1-2 minutes for all services to be ready."
 	@echo "  Airflow:   http://localhost:8080"
