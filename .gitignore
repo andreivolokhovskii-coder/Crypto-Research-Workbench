@@ -58,7 +58,7 @@ airflow/airflow.db
 dbt/logs/
 dbt/target/
 dbt/dbt_packages/
-profiles.yml
+# profiles.yml is committed — it uses env_var() only, no secrets
 
 # Spark / checkpoints
 spark-warehouse/

@@ -17,6 +17,9 @@ PROJECT_NAME ?= crypto-research-workbench
 .PHONY: help
 help:
 	@echo "Available targets:"
+	@echo "  deploy             - First-time setup: generate secrets, build images, start stack"
+	@echo "  setup              - Generate .env with random secrets (skips if .env exists)"
+	@echo "  setup-force        - Regenerate .env, overwriting existing secrets"
 	@echo "  up                 - Start all services in detached mode"
 	@echo "  down               - Stop all services"
 	@echo "  restart            - Restart all services"
@@ -41,6 +44,28 @@ help:
 	@echo "  clickhouse-client  - Open ClickHouse client shell"
 	@echo "  postgres-client    - Open Postgres client shell"
 	@echo "  spark-shell        - Open shell in spark-master container"
+
+# --------------------------------------------------
+# One-command deploy (clone → make deploy → done)
+# --------------------------------------------------
+.PHONY: deploy
+deploy:
+	@bash setup.sh
+	$(COMPOSE) up --build -d
+	@echo ""
+	@echo "Stack is starting. It may take 1-2 minutes for all services to be ready."
+	@echo "  Airflow:   http://localhost:8080"
+	@echo "  Superset:  http://localhost:8088"
+	@echo "  Jupyter:   http://localhost:8888"
+	@echo "  MinIO:     http://localhost:9002"
+
+.PHONY: setup
+setup:
+	@bash setup.sh
+
+.PHONY: setup-force
+setup-force:
+	@bash setup.sh --force
 
 # --------------------------------------------------
 # Basic stack commands
