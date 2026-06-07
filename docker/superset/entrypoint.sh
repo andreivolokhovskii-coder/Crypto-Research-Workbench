@@ -88,127 +88,145 @@ with app.app_context():
             print(f"[init] Warning syncing {tbl.table_name}: {e}")
     db.session.commit()
 
-    # 4. Create charts and dashboard (skip if already exist)
+    # 4. Create / recreate dashboard (version-gated)
     import json
     from superset.models.slice import Slice
     from superset.models.dashboard import Dashboard
 
-    def ds(name):
-        return datasets.get(name)
-
-    def metric(col, agg="AVG"):
-        return {"expressionType": "SIMPLE", "column": {"column_name": col},
-                "aggregate": agg, "label": f"{agg}({col})"}
-
-    def make_line(name, table, x_col, metric_col, groupby=None):
-        d = ds(table)
-        if not d:
-            return None
-        params = {
-            "viz_type": "echarts_timeseries_line",
-            "datasource": f"{d.id}__table",
-            "x_axis": x_col,
-            "metrics": [metric(metric_col, "AVG")],
-            "groupby": groupby or [],
-            "time_grain_sqla": None,
-            "time_range": "No filter",
-            "adhoc_filters": [],
-            "row_limit": 10000,
-            "zoomable": True,
-        }
-        return Slice(slice_name=name, viz_type="echarts_timeseries_line",
-                     datasource_type="table", datasource_id=d.id, params=json.dumps(params))
-
-    def make_bar(name, table, x_col, metric_col, groupby=None):
-        d = ds(table)
-        if not d:
-            return None
-        params = {
-            "viz_type": "echarts_timeseries_bar",
-            "datasource": f"{d.id}__table",
-            "x_axis": x_col,
-            "metrics": [metric(metric_col, "SUM")],
-            "groupby": groupby or [],
-            "time_grain_sqla": None,
-            "time_range": "No filter",
-            "adhoc_filters": [],
-            "row_limit": 10000,
-        }
-        return Slice(slice_name=name, viz_type="echarts_timeseries_bar",
-                     datasource_type="table", datasource_id=d.id, params=json.dumps(params))
-
-    def make_table(name, table, columns, row_limit=100):
-        d = ds(table)
-        if not d:
-            return None
-        params = {
-            "viz_type": "table",
-            "datasource": f"{d.id}__table",
-            "query_mode": "raw",
-            "all_columns": columns,
-            "metrics": [],
-            "order_desc": True,
-            "row_limit": row_limit,
-            "time_range": "No filter",
-            "adhoc_filters": [],
-        }
-        return Slice(slice_name=name, viz_type="table",
-                     datasource_type="table", datasource_id=d.id, params=json.dumps(params))
-
     DASHBOARD_NAME = "Crypto Market Overview"
-    if db.session.query(Dashboard).filter_by(dashboard_title=DASHBOARD_NAME).first():
-        print(f"[init] Dashboard already exists: {DASHBOARD_NAME}")
-    else:
+    DASHBOARD_V    = "v3"
+
+    existing_dash = db.session.query(Dashboard).filter_by(dashboard_title=DASHBOARD_NAME).first()
+    if existing_dash:
+        meta = json.loads(existing_dash.json_metadata or "{}")
+        if meta.get("init_version") == DASHBOARD_V:
+            print(f"[init] Dashboard {DASHBOARD_V} already up to date, skipping")
+            existing_dash = "skip"
+        else:
+            for sl in list(existing_dash.slices):
+                db.session.delete(sl)
+            db.session.delete(existing_dash)
+            db.session.commit()
+            existing_dash = None
+
+    if existing_dash != "skip":
+        def ds(name):
+            return datasets.get(name)
+
+        def m(col, agg="AVG"):
+            return {"expressionType": "SIMPLE", "column": {"column_name": col},
+                    "aggregate": agg, "label": f"{agg}({col})"}
+
+        def line(name, table, x_col, m_col, groupby=None, limit=5000):
+            d = ds(table)
+            if not d: return None
+            return Slice(slice_name=name, viz_type="echarts_timeseries_line",
+                         datasource_type="table", datasource_id=d.id,
+                         params=json.dumps({
+                             "viz_type": "echarts_timeseries_line",
+                             "datasource": f"{d.id}__table",
+                             "x_axis": x_col,
+                             "metrics": [m(m_col, "AVG")],
+                             "groupby": groupby or [],
+                             "time_grain_sqla": "P1D",
+                             "time_range": "No filter",
+                             "adhoc_filters": [],
+                             "row_limit": limit,
+                             "zoomable": True,
+                             "show_legend": True,
+                             "rich_tooltip": True,
+                         }))
+
+        def bar(name, table, x_col, m_col, groupby=None, limit=5000):
+            d = ds(table)
+            if not d: return None
+            return Slice(slice_name=name, viz_type="echarts_timeseries_bar",
+                         datasource_type="table", datasource_id=d.id,
+                         params=json.dumps({
+                             "viz_type": "echarts_timeseries_bar",
+                             "datasource": f"{d.id}__table",
+                             "x_axis": x_col,
+                             "metrics": [m(m_col, "SUM")],
+                             "groupby": groupby or [],
+                             "time_grain_sqla": "P1D",
+                             "time_range": "No filter",
+                             "adhoc_filters": [],
+                             "row_limit": limit,
+                             "zoomable": True,
+                             "show_legend": True,
+                         }))
+
+        def table(name, tbl, columns, limit=100):
+            d = ds(tbl)
+            if not d: return None
+            return Slice(slice_name=name, viz_type="table",
+                         datasource_type="table", datasource_id=d.id,
+                         params=json.dumps({
+                             "viz_type": "table",
+                             "datasource": f"{d.id}__table",
+                             "query_mode": "raw",
+                             "all_columns": columns,
+                             "metrics": [],
+                             "order_desc": True,
+                             "row_limit": limit,
+                             "time_range": "No filter",
+                             "adhoc_filters": [],
+                             "show_cell_bars": True,
+                         }))
+
+        # 6 charts in 3 rows × 2 columns
         chart_defs = [
-            make_line("Price History",   "fact_candles",   "open_time", "close",          ["symbol"]),
-            make_bar( "Volume History",  "fact_candles",   "open_time", "volume",          ["symbol"]),
-            make_line("Volatility 7d",   "mart_volatility","window_start","realized_vol_7d",["symbol"]),
-            make_table("Live Prices",    "rt_latest_kline",
-                       ["symbol","close","high","low","volume","updated_at"], 50),
-            make_table("Signals",        "rt_signals",
-                       ["detected_at","symbol","signal_type","description","value"], 100),
+            line( "Price History",       "silver_klines",   "open_time",    "close",          ["symbol"]),
+            bar(  "Volume History",      "silver_klines",   "open_time",    "volume",          ["symbol"]),
+            line( "Realized Volatility", "mart_volatility", "window_start", "realized_vol_7d", ["symbol"]),
+            table("Market Regime",       "mart_market_regime",
+                  ["symbol", "trade_date", "regime", "realized_vol_7d", "atr_14"], 50),
+            table("Live Prices",         "rt_latest_kline",
+                  ["symbol", "close", "high", "low", "volume", "updated_at"], 20),
+            table("Trading Signals",     "rt_signals",
+                  ["detected_at", "symbol", "signal_type", "description", "value"], 100),
         ]
         charts = [c for c in chart_defs if c is not None]
         for c in charts:
             db.session.add(c)
-        db.session.flush()  # get chart IDs
+        db.session.flush()
 
-        # Build grid layout: row1 = 3 charts, row2 = 2 charts
-        def chart_block(chart, cid, row_id, w=8, h=50):
-            return {
-                f"CHART-{cid}": {
-                    "type": "CHART", "id": f"CHART-{cid}",
-                    "children": [], "parents": [row_id, "GRID_ID"],
-                    "meta": {"chartId": chart.id, "width": w, "height": h, "sliceName": chart.slice_name},
-                }
-            }
-
-        row1_ids = [f"CHART-{i}" for i in range(len(charts)) if i < 3]
-        row2_ids = [f"CHART-{i}" for i in range(len(charts)) if i >= 3]
-
+        # Layout: 3 rows × 2 charts, each chart width=12
+        rows_def = [("ROW-1", charts[0:2]),
+                    ("ROW-2", charts[2:4]),
+                    ("ROW-3", charts[4:6])]
         position = {
             "DASHBOARD_VERSION_KEY": "v2",
-            "ROOT_ID":  {"type": "ROOT",  "id": "ROOT_ID",  "children": ["GRID_ID"]},
-            "GRID_ID":  {"type": "GRID",  "id": "GRID_ID",  "children": ["ROW-1", "ROW-2"], "parents": ["ROOT_ID"]},
-            "ROW-1":    {"type": "ROW",   "id": "ROW-1",    "children": row1_ids, "parents": ["GRID_ID"],
-                         "meta": {"background": "BACKGROUND_TRANSPARENT"}},
-            "ROW-2":    {"type": "ROW",   "id": "ROW-2",    "children": row2_ids, "parents": ["GRID_ID"],
-                         "meta": {"background": "BACKGROUND_TRANSPARENT"}},
+            "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
+            "GRID_ID": {"type": "GRID", "id": "GRID_ID",
+                        "children": [r[0] for r in rows_def], "parents": ["ROOT_ID"]},
         }
-        for i, c in enumerate(charts):
-            w = 8 if i < 3 else 12
-            position.update(chart_block(c, i, "ROW-1" if i < 3 else "ROW-2", w=w))
+        idx = 0
+        for row_id, row_charts in rows_def:
+            keys = []
+            for c in row_charts:
+                key = f"CHART-{idx}"
+                position[key] = {"type": "CHART", "id": key, "children": [],
+                                  "parents": [row_id, "GRID_ID"],
+                                  "meta": {"chartId": c.id, "width": 12, "height": 50,
+                                           "sliceName": c.slice_name}}
+                keys.append(key)
+                idx += 1
+            position[row_id] = {"type": "ROW", "id": row_id, "children": keys,
+                                  "parents": ["GRID_ID"],
+                                  "meta": {"background": "BACKGROUND_TRANSPARENT"}}
 
-        dashboard = Dashboard(
+        dash = Dashboard(
             dashboard_title=DASHBOARD_NAME,
             slug="crypto-market-overview",
             position_json=json.dumps(position),
+            json_metadata=json.dumps({"init_version": DASHBOARD_V}),
             published=True,
         )
-        dashboard.slices = charts
-        db.session.add(dashboard)
+        dash.slices = charts
+        db.session.add(dash)
         db.session.commit()
-        print(f"[init] Created dashboard: {DASHBOARD_NAME} with {len(charts)} charts")
+        print(f"[init] Created dashboard {DASHBOARD_V}: {len(charts)} charts")
 PYEOF
 
 exec gunicorn \
