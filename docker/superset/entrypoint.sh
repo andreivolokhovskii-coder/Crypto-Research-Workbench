@@ -54,13 +54,52 @@ with app.app_context():
     db.session.commit()
     print(f"[init] Registered database: {db_name} → {uri[:40]}...")
 
-    # 2. Auto-create datasets for all tables (schema=None — DB already set in URI)
+    # 2a. Create a daily-aggregated view to avoid clickhouse-sqlalchemy double-grain bug.
+    # clickhouse-sqlalchemy wraps time_grain_sqla twice, producing:
+    #   toStartOfDay(toDateTime(toStartOfDay(toDateTime(col)))) — invalid in ClickHouse strict mode.
+    # Solution: pre-aggregate to daily in a view and use time_grain_sqla=None in charts.
+    import urllib.request, urllib.parse as _urlparse
+
+    _ch_base = f"http://{host}:{port}/"
+    _ch_auth = _urlparse.urlencode({"user": user, "password": pw, "database": name})
+
+    def _ch_exec(sql):
+        req = urllib.request.Request(
+            f"{_ch_base}?{_ch_auth}", data=sql.encode(), method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read().decode().strip()
+        except Exception as e:
+            print(f"[init] ClickHouse exec warning: {e}")
+            return None
+
+    _ch_exec("""
+        CREATE OR REPLACE VIEW crypto.v_daily_klines AS
+        SELECT
+            exchange,
+            symbol,
+            toDate(open_time)             AS trade_date,
+            argMin(open,  open_time)      AS day_open,
+            max(high)                     AS day_high,
+            min(low)                      AS day_low,
+            argMax(close, open_time)      AS day_close,
+            sum(volume)                   AS day_volume,
+            sum(quote_volume)             AS day_quote_volume,
+            sum(trade_count)              AS day_trade_count
+        FROM crypto.silver_klines
+        WHERE interval = '1m'
+        GROUP BY exchange, symbol, trade_date
+    """)
+    print("[init] Ensured view: v_daily_klines")
+
+    # 2b. Auto-create datasets for all tables (schema=None — DB already set in URI)
     TABLES = [
         "bronze_klines", "bronze_coin_metadata", "bronze_trades",
         "silver_klines", "silver_coin_metadata",
         "fact_candles", "dim_coin", "dim_exchange",
         "mart_volatility", "mart_market_regime", "mart_volume_profile",
         "rt_latest_kline", "rt_signals",
+        "v_daily_klines",
     ]
     for table_name in TABLES:
         existing = db.session.query(SqlaTable).filter_by(
@@ -94,7 +133,7 @@ with app.app_context():
     from superset.models.dashboard import Dashboard
 
     DASHBOARD_NAME = "Crypto Market Overview"
-    DASHBOARD_V    = "v3"
+    DASHBOARD_V    = "v4"
 
     existing_dash = db.session.query(Dashboard).filter_by(dashboard_title=DASHBOARD_NAME).first()
     if existing_dash:
@@ -117,7 +156,7 @@ with app.app_context():
             return {"expressionType": "SIMPLE", "column": {"column_name": col},
                     "aggregate": agg, "label": f"{agg}({col})"}
 
-        def line(name, table, x_col, m_col, groupby=None, limit=5000):
+        def line(name, table, x_col, m_col, groupby=None, limit=5000, agg="AVG"):
             d = ds(table)
             if not d: return None
             return Slice(slice_name=name, viz_type="echarts_timeseries_line",
@@ -126,9 +165,9 @@ with app.app_context():
                              "viz_type": "echarts_timeseries_line",
                              "datasource": f"{d.id}__table",
                              "x_axis": x_col,
-                             "metrics": [m(m_col, "AVG")],
+                             "metrics": [m(m_col, agg)],
                              "groupby": groupby or [],
-                             "time_grain_sqla": "P1D",
+                             "time_grain_sqla": None,
                              "time_range": "No filter",
                              "adhoc_filters": [],
                              "row_limit": limit,
@@ -148,7 +187,7 @@ with app.app_context():
                              "x_axis": x_col,
                              "metrics": [m(m_col, "SUM")],
                              "groupby": groupby or [],
-                             "time_grain_sqla": "P1D",
+                             "time_grain_sqla": None,
                              "time_range": "No filter",
                              "adhoc_filters": [],
                              "row_limit": limit,
@@ -175,15 +214,17 @@ with app.app_context():
                          }))
 
         # 6 charts in 3 rows × 2 columns
+        # v_daily_klines: pre-aggregated daily view (avoids double-grain bug with clickhouse-sqlalchemy)
+        # time_grain_sqla=None on all time-series charts — data is already at target granularity
         chart_defs = [
-            line( "Price History",       "silver_klines",   "open_time",    "close",          ["symbol"]),
-            bar(  "Volume History",      "silver_klines",   "open_time",    "volume",          ["symbol"]),
-            line( "Realized Volatility", "mart_volatility", "window_start", "realized_vol_7d", ["symbol"]),
-            table("Market Regime",       "mart_market_regime",
+            line( "Price History (Daily)",   "v_daily_klines",  "trade_date",   "day_close",      ["symbol"]),
+            bar(  "Volume History (Daily)",   "v_daily_klines",  "trade_date",   "day_volume",     ["symbol"]),
+            line( "Realized Volatility 7d",  "mart_volatility", "window_start", "realized_vol_7d",["symbol"]),
+            table("Market Regime",           "mart_market_regime",
                   ["symbol", "trade_date", "regime", "realized_vol_7d", "atr_14"], 50),
-            table("Live Prices",         "rt_latest_kline",
+            table("Live Prices",             "rt_latest_kline",
                   ["symbol", "close", "high", "low", "volume", "updated_at"], 20),
-            table("Trading Signals",     "rt_signals",
+            table("Trading Signals",         "rt_signals",
                   ["detected_at", "symbol", "signal_type", "description", "value"], 100),
         ]
         charts = [c for c in chart_defs if c is not None]
