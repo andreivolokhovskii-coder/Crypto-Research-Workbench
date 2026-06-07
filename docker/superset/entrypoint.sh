@@ -40,17 +40,19 @@ with app.app_context():
     name = os.environ.get("CLICKHOUSE_DB", "crypto")
     uri  = f"clickhouse+http://{user}:{pw}@{host}:{port}/{name}"
 
+    # Always drop and recreate DB entry so URI is never stale from old volume
     db_name = "ClickHouse"
-    database = db.session.query(Database).filter_by(database_name=db_name).first()
-    if not database:
-        database = Database(database_name=db_name, sqlalchemy_uri=uri)
-        db.session.add(database)
+    existing = db.session.query(Database).filter_by(database_name=db_name).first()
+    if existing:
+        db.session.query(SqlaTable).filter_by(database_id=existing.id).delete()
+        db.session.delete(existing)
         db.session.commit()
-        print(f"[init] Registered database: {db_name}")
-    else:
-        database.sqlalchemy_uri = uri
-        db.session.commit()
-        print(f"[init] Updated database connection: {db_name}")
+        print(f"[init] Dropped stale database entry: {db_name}")
+
+    database = Database(database_name=db_name, sqlalchemy_uri=uri)
+    db.session.add(database)
+    db.session.commit()
+    print(f"[init] Registered database: {db_name} → {uri[:40]}...")
 
     # 2. Auto-create datasets for all tables (schema=None — DB already set in URI)
     TABLES = [
