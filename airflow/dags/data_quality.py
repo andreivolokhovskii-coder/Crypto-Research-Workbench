@@ -1,11 +1,11 @@
 """
-data_quality — ежедневная проверка качества данных.
+data_quality — daily data quality checks.
 
-Расписание: раз в день в 02:00 UTC.
-Проверки:
-  1. freshness_check  — все символы обновлялись в последние 2 часа
-  2. dbt_test         — проходят все dbt тесты (not_null, accepted_values)
-  3. row_count_check  — нет аномальных провалов в количестве свечей
+Schedule: daily at 02:00 UTC.
+Checks:
+  1. freshness_check  — all symbols updated within the last 2 hours
+  2. dbt_test         — all dbt tests pass (not_null, accepted_values)
+  3. row_count_check  — no anomalous drop in candle count per symbol
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ SELECT symbol,
 FROM crypto.silver_klines
 WHERE interval = '1m'
 GROUP BY symbol
-HAVING seconds_stale > 7200   -- более 2 часов без обновления
+HAVING seconds_stale > 7200   -- stale if no update in the last 2 hours
 """
 
 ROW_COUNT_SQL = """
@@ -51,7 +51,7 @@ FROM crypto.silver_klines
 WHERE interval = '1m'
   AND open_time >= now() - INTERVAL 24 HOUR
 GROUP BY symbol
-HAVING candles_24h < 1000     -- менее 1000 свечей за сутки = подозрительно мало
+HAVING candles_24h < 1000     -- fewer than 1000 candles per day is suspicious
 """
 
 
@@ -111,7 +111,6 @@ with DAG(
         },
     )
 
-    # Run checks in sequence: structural freshness → model correctness → data volume.
-    # Sequential ordering ensures dbt_test doesn't run against stale data, and
-    # row_count_check only runs after the model layer is confirmed healthy.
+    # Sequential: freshness → model correctness → data volume.
+    # dbt_test only runs when data is fresh; row_count_check only after models pass.
     freshness_check >> dbt_test >> row_count_check

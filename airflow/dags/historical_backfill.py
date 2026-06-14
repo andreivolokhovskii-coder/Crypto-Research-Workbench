@@ -1,10 +1,10 @@
 """
-historical_backfill — одноразовый/ручной бэкфилл исторических klines.
+historical_backfill — one-off / manual backfill of historical klines.
 
-Запускается вручную через Airflow UI (не по расписанию).
-Параметры передаются через dag_run.conf:
+Triggered manually via the Airflow UI (no schedule).
+Parameters are passed via dag_run.conf:
   exchange  (default: binance)
-  symbols   (default: из .env)
+  symbols   (default: from .env)
   interval  (default: 1m)
   days      (default: 30)
 """
@@ -19,7 +19,7 @@ from airflow.operators.bash import BashOperator
 with DAG(
     dag_id="historical_backfill",
     description="Manual historical OHLCV backfill via klines_backfill.py",
-    schedule=None,           # только ручной запуск
+    schedule=None,           # manual trigger only
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["ingestion", "historical"],

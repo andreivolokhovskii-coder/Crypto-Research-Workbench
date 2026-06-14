@@ -1,117 +1,114 @@
-# Crypto Research Workbench — Архитектура и обучающий гайд
+# Crypto Research Workbench — Architecture Guide
 
-> Эталонный проект по Data Engineering: от сырых биржевых данных до аналитического дашборда за одну команду.
-
----
-
-## Содержание
-
-1. [Идея проекта](#1-идея-проекта)
-2. [Технологический стек](#2-технологический-стек)
-3. [Медальонная архитектура данных](#3-медальонная-архитектура-данных)
-4. [Компоненты системы](#4-компоненты-системы)
-5. [Потоки данных](#5-потоки-данных)
-6. [Деплой за одну команду](#6-деплой-за-одну-команду)
-7. [Оркестрация через Airflow](#7-оркестрация-через-airflow)
-8. [Трансформации: dbt и Spark](#8-трансформации-dbt-и-spark)
-9. [Аналитика: Superset](#9-аналитика-superset)
-10. [Ключевые архитектурные решения](#10-ключевые-архитектурные-решения)
+> A reference Data Engineering project: from raw exchange data to an analytics dashboard in a single command.
 
 ---
 
-## 1. Идея проекта
+## Table of Contents
 
-### Что мы строим
+1. [Project Overview](#1-project-overview)
+2. [Technology Stack](#2-technology-stack)
+3. [Medallion Architecture](#3-medallion-architecture)
+4. [System Components](#4-system-components)
+5. [Data Flows](#5-data-flows)
+6. [One-Command Deploy](#6-one-command-deploy)
+7. [Orchestration with Airflow](#7-orchestration-with-airflow)
+8. [Transformations: dbt and Spark](#8-transformations-dbt-and-spark)
+9. [Analytics: Superset](#9-analytics-superset)
+10. [Key Architectural Decisions](#10-key-architectural-decisions)
 
-Полноценная платформа сбора, хранения и анализа криптовалютных данных. Проект охватывает весь жизненный цикл данных:
+---
+
+## 1. Project Overview
+
+### What We Build
+
+A full-stack platform for collecting, storing, and analyzing cryptocurrency market data. The project covers the entire data lifecycle:
 
 ```
-Биржа Binance
+Binance Exchange
     ↓
-Сбор данных (REST + WebSocket)
+Data Ingestion (REST + WebSocket)
     ↓
-Хранение сырых данных (MinIO + ClickHouse)
+Raw Data Storage (MinIO + ClickHouse)
     ↓
-Стриминг (Kafka)
+Streaming (Kafka)
     ↓
-Трансформации (dbt + Spark)
+Transformations (dbt + Spark)
     ↓
-Аналитика (Superset)
+Analytics (Superset)
     ↓
-Оркестрация (Airflow)
+Orchestration (Airflow)
 ```
 
-### Зачем это нужно
+### What the System Does
 
-Большинство учебных проектов по data engineering показывают один-два инструмента в изоляции. Этот проект демонстрирует как все инструменты работают **вместе** в реальной архитектуре — именно так строятся production data platforms в компаниях.
-
-### Что умеет система
-
-- Скачать 30 дней истории по 5 символам (BTC/ETH/SOL/BNB/XRP) одной командой
-- Стримить live-данные с биржи в режиме реального времени
-- Автоматически обнаруживать аномалии: всплески объёма, аномальные свечи
-- Вычислять метрики волатильности через Apache Spark
-- Классифицировать рыночные режимы (trending / volatile / ranging)
-- Отображать всё на интерактивном дашборде без ручной настройки
+- Downloads 30 days of history for 5 symbols (BTC/ETH/SOL/BNB/XRP) on deploy
+- Streams live data from the exchange via WebSocket
+- Detects anomalies in real time: volume spikes and abnormally large candles
+- Computes rolling volatility metrics via Apache Spark
+- Classifies market regimes (trending / volatile / ranging)
+- Renders everything on an interactive dashboard — fully automatic, no manual clicks
 
 ---
 
-## 2. Технологический стек
+## 2. Technology Stack
 
-### Обзор инструментов
+### Tools Overview
 
-| Слой | Инструмент | Версия | Назначение |
-|------|-----------|--------|-----------|
-| Аналитическая СУБД | ClickHouse | 23.8 LTS | Главное хранилище, колоночная БД |
-| Объектное хранилище | MinIO | latest | S3-совместимое хранилище Parquet-файлов |
-| Операционная БД | PostgreSQL | 15 | Метаданные Airflow |
-| Очередь сообщений | Apache Kafka | 7.6 (KRaft) | Стриминг событий без ZooKeeper |
-| Пакетная обработка | Apache Spark | 3.5.3 | Сложные вычисления, горизонтальное масштабирование |
-| Трансформации | dbt | 1.7.1 | SQL-трансформации с тестами и lineage |
-| Оркестрация | Apache Airflow | 2.8 | Расписание и мониторинг пайплайнов |
-| Аналитика | Apache Superset | 3.0.3 | BI-дашборды |
-| Notebooks | JupyterLab | latest | Исследовательский анализ |
-| Контейнеризация | Docker Compose | v2 | Весь стек одной командой |
+| Layer | Tool | Version | Purpose |
+|-------|------|---------|---------|
+| Analytical DB | ClickHouse | 23.8 LTS | Primary columnar store |
+| Object Storage | MinIO | latest | S3-compatible storage for Parquet files |
+| Operational DB | PostgreSQL | 15 | Airflow metadata |
+| Message Queue | Apache Kafka | 7.6 (KRaft) | Event streaming without ZooKeeper |
+| Batch Processing | Apache Spark | 3.5.3 | Heavy computations, horizontal scaling |
+| Transformations | dbt | 1.7.1 | SQL transformations with tests and lineage |
+| Orchestration | Apache Airflow | 2.8 | Scheduling and pipeline monitoring |
+| Analytics | Apache Superset | 3.0.3 | BI dashboards |
+| Notebooks | JupyterLab | latest | Exploratory analysis |
+| Containerization | Docker Compose | v2 | Full stack with one command |
 
-### Почему именно эти инструменты
+### Why These Tools
 
-**ClickHouse, а не PostgreSQL для аналитики**
+**ClickHouse over PostgreSQL for analytics**
 
-PostgreSQL — строчная СУБД, оптимизированная под OLTP (много мелких транзакций).
-ClickHouse — колоночная СУБД для OLAP (агрегации по большим таблицам).
-На запросе `SELECT AVG(close) FROM silver_klines GROUP BY symbol, toDate(open_time)`
-ClickHouse в 10–100× быстрее, потому что читает только нужные колонки с диска.
+PostgreSQL is a row-oriented OLTP database. ClickHouse is a columnar OLAP database.
+On a query like `SELECT AVG(close) FROM silver_klines GROUP BY symbol, toDate(open_time)`,
+ClickHouse reads only the `close`, `symbol`, and `open_time` columns — everything else stays on disk.
+At 200k rows the difference is negligible; at 200M rows it is critical.
 
-**MinIO, а не локальный диск**
+**MinIO over local disk**
 
-MinIO реализует S3 API. В production данные хранятся в AWS S3 или GCS.
-Используя MinIO локально, мы пишем код, который без изменений работает в облаке — просто меняем endpoint в `.env`.
+MinIO implements the S3 API. Code that writes to MinIO works unchanged against AWS S3 or GCS —
+just swap the endpoint in `.env`. This makes the project production-portable by design.
 
-**Kafka, а не прямая запись в ClickHouse**
+**Kafka over direct writes**
 
-Kafka даёт: буферизацию при пиковой нагрузке, несколько независимых консьюмеров,
-гарантию доставки и возможность replay данных с любого offset.
-При падении ClickHouse данные не теряются — они ждут в топике.
+Kafka provides: buffering under peak load, multiple independent consumers, guaranteed delivery,
+and the ability to replay any topic from any offset. If ClickHouse goes down, messages wait in
+the topic and are processed after recovery.
 
-**dbt, а не сырой SQL**
+**dbt over raw SQL**
 
-dbt — это не просто SQL, это SQL с версионированием, тестами, документацией и dependency graph.
-`dbt build` запускает трансформации в правильном порядке и автоматически проверяет качество данных.
+dbt is not just SQL — it adds versioning, automated tests, documentation, and a dependency graph.
+`dbt build` runs transformations in the correct order and verifies data quality automatically.
 
-**Spark, а не SQL в ClickHouse**
+**Spark alongside dbt**
 
-Расчёт rolling volatility на 90 днях минутных данных по 5 символам ClickHouse выполнит.
-Но при росте до сотен символов и лет истории Spark горизонтально масштабируется:
-добавь workers — задача выполнится быстрее. Также Spark незаменим для cross-symbol корреляций.
+This is not duplication — it is separation of concerns. dbt handles SQL transformations inside
+ClickHouse: ETL, aggregations, enrichment. Spark handles computations that scale horizontally:
+rolling window metrics across 90 days of per-minute data for all symbols. Add more workers —
+compute time stays constant.
 
 ---
 
-## 3. Медальонная архитектура данных
+## 3. Medallion Architecture
 
-### Концепция
+### Concept
 
-Medallion Architecture — стандарт индустрии для организации данных в хранилище.
-Данные проходят три уровня очистки:
+The Medallion Architecture is the industry standard for organizing data in a lakehouse.
+Data passes through three levels of refinement:
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
@@ -121,99 +118,108 @@ Medallion Architecture — стандарт индустрии для орган
 └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
-### Bronze — сырые данные
+### Bronze — Immutability
 
-Данные как есть, без изменений. Принцип: **никогда не удалять, никогда не изменять**.
+Data exactly as it arrived from the exchange. Millisecond timestamps, raw fields. **Never delete. Never modify.**
 
 ```sql
--- bronze_klines: временные метки в миллисекундах (как приходят с биржи)
 CREATE TABLE bronze_klines (
     ingested_at     DateTime DEFAULT now(),
     exchange        LowCardinality(String),
     symbol          LowCardinality(String),
-    open_time       Int64,           -- миллисекунды Unix timestamp
+    interval        LowCardinality(String),
+    open_time       Int64,           -- Unix milliseconds as returned by the API
     open            Float64,
-    ...
-    _source_file    String           -- путь к Parquet-файлу в MinIO
+    high            Float64,
+    low             Float64,
+    close           Float64,
+    volume          Float64,
+    _source_file    String           -- path to the Parquet file in MinIO
 ) ENGINE = MergeTree()
 PARTITION BY toYYYYMM(_partition_date)
 ORDER BY (exchange, symbol, interval, open_time);
 ```
 
-Зачем хранить сырые данные? Если в трансформации была ошибка — можно перезапустить с нуля.
-Bronze — источник правды, из которого можно восстановить весь pipeline.
+Why keep raw data? If a transformation had a bug, replay from bronze. Bronze is the source of truth
+from which the entire pipeline can be reconstructed.
 
-### Silver — нормализованные данные
+### Silver — Idempotency via ReplacingMergeTree
 
-Базовая очистка: правильные типы, UTC timestamps, дедупликация.
+Basic normalization: `Int64` milliseconds → `DateTime` UTC, correct types.
+The critical choice is the table engine:
 
 ```sql
--- silver_klines: DateTime вместо Int64, ReplacingMergeTree для идемпотентности
 CREATE TABLE silver_klines (
     exchange    LowCardinality(String),
     symbol      LowCardinality(String),
-    open_time   DateTime,            -- нормализованный UTC DateTime
+    interval    LowCardinality(String),
+    open_time   DateTime,            -- normalized UTC DateTime
     close_time  DateTime,
     open        Float64,
     ...
-) ENGINE = ReplacingMergeTree(ingested_at)  -- дедупликация по ключу
+) ENGINE = ReplacingMergeTree(ingested_at)
 ORDER BY (exchange, symbol, interval, open_time);
 ```
 
-**ReplacingMergeTree** — ключевой паттерн идемпотентности. При повторной загрузке тех же данных
-дубли не накапливаются: движок оставляет строку с максимальным значением `ingested_at`.
-Запрос с `FINAL` форсирует слияние на лету.
+`ReplacingMergeTree(ingested_at)` deduplicates on the primary key, keeping the row with
+the highest `ingested_at`. The pipeline can run twice without producing duplicates.
+`SELECT ... FINAL` forces an in-flight merge when querying.
 
-### Gold — аналитический слой
-
-Агрегированные, обогащённые данные для BI. Здесь живут dbt-модели и Spark-джобы.
+### Gold — dbt Builds Analytics
 
 ```
-gold/
-├── fact_candles         — свечи с производными метриками (price_change_pct, is_bullish)
-├── dim_coin             — справочник монет из CoinGecko
-├── dim_exchange         — справочник бирж
-├── mart_volatility      — rolling volatility 7d/30d, ATR-14  ← dbt
-├── mart_market_regime   — классификация рынка                ← Spark
-└── mart_volume_profile  — профиль объёма
+silver_klines
+    └── stg_klines (view — thin wrapper with FINAL)
+            ├── fact_candles    (enriched: price_change_pct, is_bullish)
+            └── mart_volatility (rolling vol 7d/30d, ATR-14)
 ```
 
-### Real-time слой
+dbt builds the dependency graph automatically from `{{ ref('stg_klines') }}`
+and runs models in the correct order. Tests are declared in `schema.yml`:
 
-Отдельный слой для данных с очень низкой латентностью:
+```yaml
+- name: is_bullish
+  tests:
+    - accepted_values:
+        values: [0, 1]   # dbt generates the SQL assertion automatically
+```
+
+### Real-Time Layer
+
+A separate layer for very low-latency data:
 
 ```sql
-rt_latest_kline  -- текущая цена по каждому символу (обновляется на каждом тике)
-rt_signals       -- торговые сигналы с TTL 7 дней (MergeTree + TTL)
+rt_latest_kline  -- current price per symbol, updated on every tick
+rt_signals       -- trade signals with a 7-day TTL (MergeTree + TTL clause)
 ```
 
 ---
 
-## 4. Компоненты системы
+## 4. System Components
 
-### Ingestion: исторические данные
+### Ingestion: Historical Data
 
-**Файл:** `ingestion/historical/klines_backfill.py`
+**File:** `ingestion/historical/klines_backfill.py`
 
-Использует библиотеку `ccxt` — универсальный клиент для 100+ бирж.
-Один и тот же код работает с Binance, Bybit, OKX, Coinbase.
+Uses `ccxt` — a universal client for 100+ exchanges.
+The same code works with Binance, Bybit, OKX, and Coinbase.
 
 ```python
-# Паттерн: пагинированная загрузка с защитой от дублей
+# Paginated fetch with deduplication
 exchange = ccxt.binance()
 seen = set()
 while start < end:
     candles = exchange.fetch_ohlcv(symbol, timeframe, since=start, limit=1000)
     fresh = [c for c in candles if c[0] not in seen]
     seen.update(c[0] for c in fresh)
-    start = candles[-1][0] + 1  # следующая страница
+    start = candles[-1][0] + 1
 ```
 
-Результат идёт в два места:
-- **MinIO** — Parquet с Snappy-компрессией, партиционированный по дате. Долгосрочное хранение, исходник для replay
-- **ClickHouse** — bronze + silver для немедленных запросов
+Output goes to two destinations in parallel:
+- **MinIO** — Parquet with Snappy compression, date-partitioned. Long-term storage, replay source.
+- **ClickHouse** — bronze + silver for immediate queries.
 
-### Ingestion: стриминг
+### Ingestion: Streaming
 
 **WebSocket Producer** (`ingestion/realtime/ws_producer.py`)
 
@@ -221,45 +227,45 @@ while start < end:
 Binance WS → [Pydantic validation] → Kafka topic: klines.raw
 ```
 
-Pydantic-валидация на входе: невалидные сообщения уходят в Dead Letter Queue (`klines.dlq`), а не теряются.
-Exponential backoff при реконнекте: 1s, 2s, 4s, 8s... до 60s максимум.
+Pydantic validates every message at the boundary. Invalid messages go to a Dead Letter Queue
+(`klines.dlq`) rather than being silently dropped. Reconnect uses exponential backoff: 1s, 2s, 4s … up to 60s.
 
 **Kafka Consumer** (`ingestion/realtime/klines_consumer.py`)
 
-Ключевая особенность: **at-least-once delivery** с ручным commit offset.
+Key pattern: **at-least-once delivery with manual offset commit**.
 
 ```
-klines.raw → [batch: 50 candles ИЛИ 10 секунд, что наступит раньше]
-    ├── rt_latest_kline  — каждый тик, включая незакрытые свечи
-    ├── bronze_klines    — только закрытые свечи
-    ├── silver_klines    — только закрытые свечи
-    └── rt_signals       — если сработал детектор аномалий
+klines.raw → [batch: 50 closed candles OR 10 seconds, whichever comes first]
+    ├── rt_latest_kline  — every tick, including open candles
+    ├── bronze_klines    — closed candles only
+    ├── silver_klines    — closed candles only
+    └── rt_signals       — emitted when a detector fires
          ↓
-    commit offset — только ПОСЛЕ успешной записи в ClickHouse
+    commit offset — ONLY after a successful ClickHouse flush
 ```
 
-Детекция сигналов в реальном времени (rolling window 60 свечей):
-- **volume_spike**: z-score объёма > 2.5σ
-- **large_candle**: размах свечи > 3× ATR-14
+Real-time anomaly detection (rolling window of 60 candles):
+- **volume_spike**: volume z-score > 2.5σ
+- **large_candle**: candle range > 3× ATR-14
 
-### Ingestion: метаданные (CoinGecko)
+### Ingestion: Metadata (CoinGecko)
 
-**Файл:** `ingestion/metadata/coingecko_dims.py`
+**File:** `ingestion/metadata/coingecko_dims.py`
 
-Топ-100 монет с рейтингом, категориями, market cap. Обогащает `dim_coin`.
-Запускается ежедневно через Airflow с rate limiting: 1.5 сек между запросами к бесплатному API.
+Fetches the top-100 coins with rank, categories, and market cap to populate `dim_coin`.
+Runs daily via Airflow with rate limiting: 1.5 s between requests on the free tier.
 
 ---
 
-## 5. Потоки данных
+## 5. Data Flows
 
-### Исторический пайплайн (batch)
+### Historical Pipeline (Batch)
 
 ```
 make deploy
     │
     ├── klines_backfill.py
-    │   5 символов × 30 дней × 1440 свечей/день ≈ 216k строк
+    │   5 symbols × 30 days × 1440 candles/day ≈ 216k rows
     │   ├──▶ MinIO: s3://bronze/klines/binance/BTCUSDT/1m/date=2024-05-01/data.parquet
     │   └──▶ ClickHouse: bronze_klines + silver_klines
     │
@@ -267,390 +273,367 @@ make deploy
     │   └──▶ ClickHouse: bronze_coin_metadata + silver_coin_metadata
     │
     ├── dbt build
-    │   ├──▶ stg_klines      (view над silver_klines FINAL)
-    │   ├──▶ fact_candles    (enriched candles с производными метриками)
+    │   ├──▶ stg_klines      (view over silver_klines FINAL)
+    │   ├──▶ fact_candles    (enriched candles with derived metrics)
     │   ├──▶ dim_coin        (latest snapshot per coin_id)
     │   └──▶ mart_volatility (rolling vol 7d/30d + ATR-14)
     │
     └── spark-submit volatility_batch.py
-        └──▶ mart_market_regime (OHLCV + vol + regime: trending/volatile/ranging)
+        └──▶ mart_market_regime (daily OHLCV + vol metrics + regime label)
 ```
 
-### Real-time пайплайн (streaming)
+### Real-Time Pipeline (Streaming)
 
 ```
-Binance WebSocket (5 символов, combined stream)
+Binance WebSocket (5 symbols, combined stream)
     │
     ▼
 ws_producer.py
     │  {"symbol": "BTCUSDT", "close": 67123.5, "volume": 12.4, "is_closed": true}
     ▼
-Kafka topic: klines.raw  (retention: 7 дней)
+Kafka topic: klines.raw  (7-day retention)
     │
     ▼
 klines_consumer.py
     ├── rt_latest_kline  ──▶ Superset "Live Prices"
-    ├── silver_klines    ──▶ база для следующего dbt run
+    ├── silver_klines    ──▶ source for the next dbt run
     └── rt_signals       ──▶ Superset "Trading Signals"
 ```
 
-### Ежедневный пайплайн (Airflow)
+### Daily Pipeline (Airflow)
 
 ```
-Каждые 6 часов (00:00, 06:00, 12:00, 18:00):
+Every 6 h  (00:00, 06:00, 12:00, 18:00 UTC):
     [incremental_klines, metadata_refresh] ──▶ dbt_build
 
-Каждые 6 часов, сдвиг +30 мин (00:30, 06:30, 12:30, 18:30):
+Every 6 h, +30 min offset (00:30, 06:30, 12:30, 18:30 UTC):
     spark_volatility_batch ──▶ mart_market_regime
 
-Ежедневно в 02:00:
+Daily at 02:00 UTC:
     freshness_check ──▶ dbt_test ──▶ row_count_check
 ```
 
 ---
 
-## 6. Деплой за одну команду
+## 6. One-Command Deploy
 
-### setup.sh — генерация секретов
+### setup.sh — Secret Generation
 
 ```bash
-# Криптографически стойкие пароли — никаких дефолтных "admin/admin"
-gen_pass()   { openssl rand -hex 24; }    # 48 hex-символов
+# Cryptographically strong passwords — no default "admin/admin"
+gen_pass()   { openssl rand -hex 24; }    # 48 hex characters
 gen_fernet() { python3 -c "import base64, os;
     print(base64.urlsafe_b64encode(os.urandom(32)).decode())"; }
 
-# sed с разделителем | вместо / — base64 содержит слэши
+# Use | as the sed delimiter — base64 output contains forward slashes
 sed -i "s|change_me_clickhouse_password|${CLICKHOUSE_PASSWORD}|g" .env
 ```
 
-Результат: `.env` с уникальными паролями для каждого деплоя.
-`.env` в `.gitignore` — секреты никогда не попадают в git.
+Every deploy gets unique passwords. `.env` is in `.gitignore` and never reaches git.
+Only `.env.example` with placeholder values is committed.
 
-### Makefile deploy target — полный сценарий
+### Makefile Deploy Sequence
 
 ```makefile
 deploy:
-    @bash setup.sh                        # генерируем секреты
-    DOCKER_BUILDKIT=0 docker compose up --build -d
-    # DOCKER_BUILDKIT=0 обходит IPv6 DNS-проблему при сборке образов
+    @bash setup.sh
+    DOCKER_BUILDKIT=0 $(COMPOSE) up --build -d
+    # DOCKER_BUILDKIT=0 works around an IPv6 DNS resolution bug on some Linux hosts
 
     @until docker inspect workbench-clickhouse \
         --format='{{.State.Health.Status}}' | grep -q healthy; do sleep 2; done
-    # ждём ClickHouse (healthcheck: SELECT 1 via HTTP /ping)
+    # wait for ClickHouse (healthcheck: HTTP GET /ping)
 
     @until docker inspect workbench-minio-init \
         --format='{{.State.Status}}' | grep -qE 'exited'; do sleep 2; done
-    # ждём создания MinIO buckets (one-shot контейнер)
+    # wait for MinIO bucket creation (one-shot container)
 
-    docker compose run --rm app python ingestion/historical/klines_backfill.py
-    docker compose run --rm app python ingestion/metadata/coingecko_dims.py || true
-    docker compose run --rm dbt dbt deps && dbt build
-    docker compose exec spark-master spark-submit volatility_batch.py || true
+    $(COMPOSE) run --rm app python ingestion/historical/klines_backfill.py
+    $(COMPOSE) run --rm app python ingestion/metadata/coingecko_dims.py || true
+    $(COMPOSE) run --rm dbt dbt deps && dbt build
+    $(COMPOSE) exec spark-master spark-submit volatility_batch.py || true
 ```
 
-### Порядок запуска сервисов (depends_on)
+### Service Start Order (depends_on)
 
 ```yaml
-# Airflow webserver запускается только после успешной миграции БД
 airflow-webserver:
   depends_on:
     postgres:
-      condition: service_healthy              # ждёт pg_isready
+      condition: service_healthy                  # waits for pg_isready
     airflow-init:
-      condition: service_completed_successfully  # ждёт exit 0
+      condition: service_completed_successfully   # waits for exit 0
 ```
+
+`service_completed_successfully` is used for one-shot init containers.
+`service_healthy` is used for long-running services with a healthcheck.
 
 ---
 
-## 7. Оркестрация через Airflow
+## 7. Orchestration with Airflow
 
-### Архитектура
+### Architecture
 
-**LocalExecutor** — все задачи выполняются на одной машине в отдельных процессах.
-Для production с большой нагрузкой: CeleryExecutor (несколько workers) или KubernetesExecutor (pod per task).
+**LocalExecutor** — all tasks run as separate processes on the same machine.
+For production with higher throughput: CeleryExecutor (multiple workers) or KubernetesExecutor (one pod per task).
 
-### DAG: daily_pipeline — паттерн fan-in
+### DAG: daily_pipeline — Fan-In Pattern
 
 ```python
+# Credentials read from the container environment at DAG parse time
 COMMON_ENV = {
     "CLICKHOUSE_PASSWORD": os.environ.get("CLICKHOUSE_PASSWORD", ""),
-    # os.environ.get() читается при загрузке DAG — пароль из env контейнера
 }
 
-# Параллельные задачи, потом зависимая
+# Two independent tasks run in parallel, dbt runs only after both succeed
 [incremental_klines, metadata_refresh] >> dbt_build
 ```
-
-Fan-in: две независимые задачи выполняются параллельно, dbt запускается только когда обе успешны.
 
 ### DAG: spark_batch — SparkSubmitOperator
 
 ```python
 volatility_batch = SparkSubmitOperator(
-    conn_id="spark_default",   # connection создан в airflow-init автоматически
+    conn_id="spark_default",   # connection created automatically by airflow-init
     application="/app/spark_jobs/volatility_batch.py",
     packages="com.clickhouse:clickhouse-jdbc:0.6.5",
     conf={"spark.executor.memory": "1g"},
 )
 ```
 
-Offset расписания +30 минут гарантирует что dbt-пайплайн уже завершился.
+The +30-minute offset guarantees that the dbt pipeline has already completed.
 
-### DAG: data_quality — последовательные проверки
+### DAG: data_quality — Sequential Checks
 
 ```python
 freshness_check >> dbt_test >> row_count_check
 ```
 
-Если данные устарели (>2 часов без обновления) — не тратим время на dbt tests.
+If data is stale (>2 h without updates), dbt tests are skipped — no point testing a broken layer.
 
-### Автосозданные ресурсы в airflow-init
-
-Чтобы не требовать ручных действий в UI после деплоя:
+### Resources Created Automatically by airflow-init
 
 ```bash
-# Создаём Spark connection — без него spark_batch DAG падает сразу
+# Spark connection — without this, spark_batch fails immediately
 airflow connections add spark_default \
     --conn-type spark --conn-host "spark://spark-master" --conn-port 7077
 
-# Заполняем Variables для совместимости с Jinja-шаблонами в DAGs
+# Variables — belt-and-suspenders for any DAG using var.value.get()
 airflow variables set CLICKHOUSE_PASSWORD "${CLICKHOUSE_PASSWORD}"
 airflow variables set MINIO_ROOT_PASSWORD  "${MINIO_ROOT_PASSWORD}"
 ```
 
 ---
 
-## 8. Трансформации: dbt и Spark
+## 8. Transformations: dbt and Spark
 
-### dbt: SQL-трансформации с тестами
+### dbt: SQL with Tests and Lineage
 
-dbt не выполняет вычисления — он генерирует и запускает SQL в ClickHouse.
+dbt does not execute computations — it generates and runs SQL inside ClickHouse.
 
 ```
 dbt/
 ├── models/
 │   ├── staging/
-│   │   ├── stg_klines.sql    -- view: тонкая обёртка над silver_klines FINAL
-│   │   └── sources.yml       -- декларация источников (silver_klines)
+│   │   ├── stg_klines.sql     -- view: thin wrapper over silver_klines FINAL
+│   │   └── sources.yml        -- source declaration
 │   └── marts/
-│       ├── fact_candles.sql  -- обогащённые свечи (price_change_pct, is_bullish)
+│       ├── fact_candles.sql   -- enriched candles (price_change_pct, is_bullish)
 │       ├── mart_volatility.sql
-│       └── schema.yml        -- тесты: not_null, accepted_values
+│       └── schema.yml         -- not_null, accepted_values tests
 ├── macros/
-└── profiles.yml              -- credentials через env_var()
+└── profiles.yml               -- credentials via env_var()
 ```
 
-Граф зависимостей строится из `{{ ref('stg_klines') }}`:
-
-```
-silver_klines
-    └── stg_klines (view)
-            ├── fact_candles (table)   ← dbt build запустит именно в этом порядке
-            └── mart_volatility (table)
-```
-
-Тесты в `schema.yml` — часть `dbt build`:
-
-```yaml
-- name: is_bullish
-  tests:
-    - accepted_values:
-        values: [0, 1]   # dbt сгенерирует SQL-проверку автоматически
-```
-
-### mart_volatility: rolling window в ClickHouse SQL
+### mart_volatility: Rolling Window in ClickHouse SQL
 
 ```sql
--- Annualized realized volatility — стандарт в quant finance
+-- Annualized realized volatility — quant finance standard
 round(
     stddevSamp(log_return) over (
         partition by exchange, symbol
         order by trade_date
-        rows between 6 preceding and current row  -- 7-дневное окно
-    ) * sqrt(365), 6                              -- аннуализация (252 trading days / 365 calendar)
+        rows between 6 preceding and current row   -- 7-day window
+    ) * sqrt(365), 6                               -- annualize
 ) as realized_vol_7d
 ```
 
-`log(close / prev_close)` — логарифмическая доходность.
-Лучше аппроксимирует нормальное распределение, чем простое `(close - prev) / prev`.
+`log(close / prev_close)` is the log return. It approximates a normal distribution
+better than the simple percentage change `(close - prev) / prev`.
 
-### Spark: market regime classification
+### Spark: Market Regime Classification
 
 ```python
-# Два критерия классификации режима рынка
+window_7d = Window.partitionBy("exchange", "symbol") \
+                  .orderBy("trade_date") \
+                  .rowsBetween(-6, 0)
 
-vol_condition = F.col("vol_7d") > F.lit(1.5) * F.col("vol_30d")
-# Волатильность выше нормы: 7-дневная > 1.5× от 30-дневной
+df = df.withColumn(
+    "vol_7d",
+    F.stddev_samp("log_return").over(window_7d) * F.sqrt(F.lit(365))
+)
 
-trend_up   = (F.col("close") - F.col("sma_20")) / F.col("sma_20") > 0.02
-trend_down = (F.col("sma_20") - F.col("close")) / F.col("sma_20") > 0.02
-# Отклонение от SMA-20 больше 2%
-
-regime = F.when(vol_condition, "volatile") \
-          .when(trend_up,      "trending_up") \
-          .when(trend_down,    "trending_down") \
-          .otherwise(          "ranging")
+regime = F.when(F.col("vol_7d") > F.lit(1.5) * F.col("vol_30d"), "volatile") \
+          .when((F.col("close") - F.col("sma_20")) / F.col("sma_20") > 0.02, "trending_up") \
+          .when((F.col("sma_20") - F.col("close")) / F.col("sma_20") > 0.02, "trending_down") \
+          .otherwise("ranging")
 ```
 
-### Почему dbt И Spark одновременно — разделение ответственности
+### dbt vs Spark — Separation of Concerns
 
 | | dbt | Spark |
 |---|---|---|
-| Тип вычислений | SQL трансформации | Распределённые вычисления |
-| Масштабирование | Вертикальное (ClickHouse) | Горизонтальное (добавить workers) |
-| Идеально для | ETL, агрегации, joins | Сложные window functions на больших объёмах |
-| Тестирование | Встроенные тесты | Unit tests на PySpark |
-| Используем для | fact_candles, mart_volatility | mart_market_regime |
+| Computation type | SQL transformations | Distributed computation |
+| Scaling | Vertical (ClickHouse) | Horizontal (add workers) |
+| Best for | ETL, aggregations, joins | Heavy window functions at scale |
+| Testing | Built-in schema tests | PySpark unit tests |
+| Used for | fact_candles, mart_volatility | mart_market_regime |
 
 ---
 
-## 9. Аналитика: Superset
+## 9. Analytics: Superset
 
-### Автонастройка при старте контейнера
+### Auto-Configuration on Container Start
 
-Superset полностью настраивается через Python-скрипт в `docker/superset/entrypoint.sh`.
-Нет ручных кликов в UI после деплоя:
+Superset is fully configured via a Python script in `docker/superset/entrypoint.sh`.
+No manual clicks in the UI after deploy:
 
 ```python
-# Шаг 1: пересоздаём DB connection (пароль мог измениться при redeploy)
-database = Database(
-    database_name="ClickHouse",
-    sqlalchemy_uri=f"clickhouse+http://{user}:{pw}@{host}:{port}/{db}"
-)
+app = create_app()
+with app.app_context():
+    # 1. Always recreate the DB connection (password may have changed on redeploy)
+    database = Database(
+        database_name="ClickHouse",
+        sqlalchemy_uri=f"clickhouse+http://{user}:{pw}@{host}:{port}/{db}"
+    )
 
-# Шаг 2: создаём pre-aggregated view для обхода double-grain бага
-_ch_exec("""
-    CREATE OR REPLACE VIEW crypto.v_daily_klines AS
-    SELECT exchange, symbol,
-           toDate(open_time) AS trade_date,
-           argMin(open, open_time) AS day_open,
-           max(high) AS day_high, min(low) AS day_low,
-           argMax(close, open_time) AS day_close,
-           sum(volume) AS day_volume
-    FROM crypto.silver_klines WHERE interval = '1m'
-    GROUP BY exchange, symbol, trade_date
-""")
+    # 2. Create a pre-aggregated view to work around the double-grain bug
+    _ch_exec("""
+        CREATE OR REPLACE VIEW crypto.v_daily_klines AS
+        SELECT exchange, symbol,
+               toDate(open_time)            AS trade_date,
+               argMin(open,  open_time)     AS day_open,
+               max(high)                    AS day_high,
+               min(low)                     AS day_low,
+               argMax(close, open_time)     AS day_close,
+               sum(volume)                  AS day_volume
+        FROM crypto.silver_klines
+        WHERE interval = '1m'
+        GROUP BY exchange, symbol, trade_date
+    """)
 
-# Шаг 3: регистрируем датасеты, синхронизируем колонки
-# Шаг 4: создаём дашборд (версионирован — пересоздаётся только при смене DASHBOARD_V)
+    # 3. Register datasets and sync column metadata
+    # 4. Create dashboard (version-gated — only recreated when DASHBOARD_V changes)
 ```
 
-### Решение проблемы double-grain
+### The Double-Grain Bug Fix
 
-ClickHouse в strict mode: все не-агрегированные колонки SELECT должны быть в GROUP BY.
-Superset с `clickhouse-sqlalchemy` накладывал time grain дважды:
+ClickHouse strict mode requires every non-aggregated SELECT column to appear in GROUP BY.
+`clickhouse-sqlalchemy` applied the time grain function twice, producing:
 
 ```sql
--- Проблема: двойное оборачивание
+-- What ClickHouse received (NOT_AN_AGGREGATE error):
 GROUP BY toStartOfDay(toDateTime(toStartOfDay(toDateTime(open_time))))
---        ↑ grain применён к уже обёрнутому алиасу open_time ↑
 
--- Решение: pre-aggregated view + time_grain_sqla=None
--- Данные уже на нужной гранулярности, grain-функция не применяется
+-- Fix: pre-aggregated view + time_grain_sqla=None in chart params
+-- No grain function is applied; data is already at the target granularity.
 SELECT trade_date, symbol, AVG(day_close)
 FROM v_daily_klines
-GROUP BY trade_date, symbol   -- валидный ClickHouse GROUP BY
+GROUP BY trade_date, symbol   -- valid ClickHouse GROUP BY
 ```
 
-### Дашборд: 6 чартов в 3 рядах
+### Dashboard Layout
 
-| Ряд | Чарт 1 | Чарт 2 | Источник данных |
-|-----|--------|--------|----------------|
-| 1 | Price History (линейный, все символы) | Volume History (барный) | v_daily_klines |
-| 2 | Realized Volatility 7d | Market Regime (таблица) | mart_volatility, mart_market_regime |
-| 3 | Live Prices (таблица) | Trading Signals (таблица) | rt_latest_kline, rt_signals |
+| Row | Chart 1 | Chart 2 | Data Source |
+|-----|---------|---------|-------------|
+| 1 | Price History (line, all symbols) | Volume History (bar) | v_daily_klines |
+| 2 | Realized Volatility 7d | Market Regime (table) | mart_volatility, mart_market_regime |
+| 3 | Live Prices (table) | Trading Signals (table) | rt_latest_kline, rt_signals |
 
 ---
 
-## 10. Ключевые архитектурные решения
+## 10. Key Architectural Decisions
 
-### Идемпотентность — любой шаг можно повторить
+### Idempotency — Every Step Is Replayable
 
-- `ReplacingMergeTree` дедуплицирует повторные вставки в ClickHouse
-- `dbt build` пересоздаёт таблицы через `EXCHANGE TABLES` (atomic swap без даунтайма)
-- `CREATE OR REPLACE VIEW` — безопасная перезапись view
-- Superset entrypoint версионирует дашборд через `json_metadata.init_version`
+- `ReplacingMergeTree` deduplicates repeated inserts in ClickHouse
+- `dbt build` recreates tables via atomic `EXCHANGE TABLES` (no downtime)
+- `CREATE OR REPLACE VIEW` — safe view recreation
+- Superset dashboard is version-gated via `json_metadata.init_version`
 
-### Безопасность секретов
+### Secret Management
 
 ```
-.env.example  → в git (заглушки: change_me_clickhouse_password)
-.env          → в .gitignore (никогда в git)
-setup.sh      → генерирует уникальные пароли при каждом деплое
+.env.example  → committed to git (placeholder values only)
+.env          → in .gitignore, never committed
+setup.sh      → generates unique passwords on every deploy
 
-dbt profiles.yml: credentials через {{ env_var('CLICKHOUSE_PASSWORD') }}
-DAGs:             credentials через os.environ.get('CLICKHOUSE_PASSWORD')
-Docker Compose:   передаёт из .env через environment: ${CLICKHOUSE_PASSWORD}
+dbt profiles.yml:  credentials via {{ env_var('CLICKHOUSE_PASSWORD') }}
+Airflow DAGs:      credentials via os.environ.get('CLICKHOUSE_PASSWORD')
+Docker Compose:    injects from .env via environment: ${CLICKHOUSE_PASSWORD}
 ```
 
-### Graceful degradation — деплой не прерывается при сбое второстепенных шагов
+### Graceful Degradation
+
+Non-critical steps do not block the deploy:
 
 ```makefile
 $(COMPOSE) run --rm app python coingecko_dims.py \
-    || echo "[warn] metadata failed — dim_coin will be empty"
-    # CoinGecko может быть недоступен — это не блокирует основной пайплайн
+    || echo "[warn] CoinGecko unavailable — dim_coin will be empty"
 
 $(COMPOSE) exec spark-master spark-submit volatility_batch.py \
     || echo "[warn] Spark failed — run 'make spark-volatility' manually"
-    # mart_market_regime пустой, но остальной дашборд работает
 ```
 
-### Lambda Architecture: batch + streaming в одном слое
+### Lambda Architecture — Batch and Streaming in One Layer
 
 ```
 Batch (historical):   ccxt REST API → MinIO Parquet → silver_klines
 Streaming (live):     Binance WS → Kafka → klines_consumer → silver_klines
 
-Общий слой: silver_klines
+Convergence point: silver_klines
     ↓
-dbt + Spark читают из него — неважно, откуда пришли данные
+dbt and Spark read from one source regardless of how the data arrived
 ```
-
-Это классический паттерн Lambda Architecture. Batch даёт полноту и корректность данных.
-Streaming даёт актуальность. `silver_klines` — точка схождения обоих потоков.
 
 ### Infrastructure as Code
 
-Весь стек описан декларативно:
+The entire stack is declared, not scripted:
 
 ```
-docker-compose.yml  — все сервисы, сети, volumes, healthchecks
-Makefile            — все операции (deploy, reset, backfill, logs)
-setup.sh            — генерация секретов
-clickhouse/ddl/     — схема БД (применяется при первом старте)
-dbt/                — трансформации с тестами
-airflow/dags/       — расписание и оркестрация
+docker-compose.yml  — all services, networks, volumes, healthchecks
+Makefile            — all operations (deploy, reset, backfill, logs)
+setup.sh            — secret generation
+clickhouse/ddl/     — database schema (applied on first start)
+dbt/                — transformations with tests
+airflow/dags/       — scheduling and orchestration
 ```
 
-Новый разработчик клонирует репо и запускает `make deploy` — всё поднимается само.
+A new developer clones the repo and runs `make deploy` — everything comes up.
 
 ---
 
-## Структура файлов проекта
+## Project File Structure
 
 ```
 Crypto-Research-Workbench/
 │
-├── docker-compose.yml           # главный оркестратор сервисов
-├── Makefile                     # точки входа для всех операций
-├── setup.sh                     # генерация секретов и .env
-├── .env.example                 # шаблон переменных окружения
+├── docker-compose.yml               # main service orchestrator
+├── Makefile                         # entry points for all operations
+├── setup.sh                         # secret generation + .env creation
+├── .env.example                     # environment variable template
 │
 ├── docker/
-│   ├── app/Dockerfile           # Python ingestion/processing
-│   ├── dbt/Dockerfile           # dbt-clickhouse
+│   ├── app/Dockerfile               # Python ingestion / processing
+│   ├── dbt/Dockerfile               # dbt-clickhouse
 │   └── superset/
-│       ├── Dockerfile           # Superset + clickhouse-sqlalchemy
-│       └── entrypoint.sh        # автонастройка: DB, datasets, dashboard
+│       ├── Dockerfile               # Superset + clickhouse-sqlalchemy
+│       └── entrypoint.sh            # auto-setup: DB, datasets, dashboard
 │
 ├── ingestion/
-│   ├── historical/
-│   │   └── klines_backfill.py   # REST API → MinIO + ClickHouse
-│   ├── realtime/
-│   │   ├── ws_producer.py       # WebSocket → Kafka
-│   │   └── klines_consumer.py   # Kafka → ClickHouse + signals
-│   └── metadata/
-│       └── coingecko_dims.py    # CoinGecko → dim_coin
+│   ├── historical/klines_backfill.py    # REST API → MinIO + ClickHouse
+│   ├── realtime/ws_producer.py          # WebSocket → Kafka
+│   ├── realtime/klines_consumer.py      # Kafka → ClickHouse + signals
+│   └── metadata/coingecko_dims.py       # CoinGecko → dim_coin
 │
 ├── dbt/
 │   ├── models/
@@ -658,34 +641,33 @@ Crypto-Research-Workbench/
 │   │   └── marts/
 │   │       ├── fact_candles.sql
 │   │       ├── mart_volatility.sql
-│   │       └── schema.yml       # тесты и документация
-│   └── profiles.yml             # credentials через env_var()
+│   │       └── schema.yml
+│   └── profiles.yml
 │
 ├── spark_jobs/
-│   └── volatility_batch.py      # rolling vol + market regime classification
+│   └── volatility_batch.py          # rolling vol + market regime
 │
 ├── airflow/dags/
-│   ├── daily_pipeline.py        # каждые 6ч: backfill + metadata + dbt
-│   ├── spark_batch.py           # каждые 6ч (+30мин): Spark vol job
-│   ├── data_quality.py          # ежедневно: freshness + dbt tests
-│   └── historical_backfill.py   # ручной запуск с параметрами
+│   ├── daily_pipeline.py            # every 6 h: backfill + metadata + dbt
+│   ├── spark_batch.py               # every 6 h (+30 min): Spark job
+│   ├── data_quality.py              # daily: freshness + tests + row counts
+│   └── historical_backfill.py       # manual trigger with params
 │
 └── clickhouse/ddl/
-    ├── 01_init.sql              # bronze + silver + gold схемы
-    └── 02_streaming.sql         # rt_latest_kline + rt_signals
+    ├── 01_init.sql                  # bronze + silver + gold schemas
+    └── 02_streaming.sql             # rt_latest_kline + rt_signals
 ```
 
 ---
 
-## Итог
+## Summary
 
-Этот проект — не просто набор связанных инструментов. Это демонстрация **принципов**:
+This project is not just a set of connected tools. It demonstrates **principles**:
 
-1. **Medallion Architecture** — bronze → silver → gold, каждый уровень чище предыдущего
-2. **Идемпотентность** — любой шаг можно перезапустить без side effects
+1. **Medallion Architecture** — bronze → silver → gold, each layer cleaner than the last
+2. **Idempotency** — every step can be re-run without side effects
 3. **Observability** — Airflow DAGs, dbt tests, data quality checks
-4. **Infrastructure as Code** — весь стек в git, `make deploy` и готово
-5. **Separation of concerns** — ingestion / transformation / serving / orchestration
+4. **Infrastructure as Code** — the entire stack lives in git; `make deploy` and you're done
+5. **Separation of Concerns** — ingestion / transformation / serving / orchestration
 
-Именно так выглядят data platforms в реальных компаниях.
-Масштаб может быть другим, принципы — те же.
+This is how data platforms look at real companies. The scale may differ; the principles are the same.

@@ -1,11 +1,11 @@
 """
-daily_pipeline — ежедневный пайплайн обновления данных.
+daily_pipeline — recurring data update pipeline.
 
-Расписание: каждые 6 часов.
-Шаги:
-  1. incremental_klines   — докачивает свечи за последние 8 часов (с перекрытием)
-  2. metadata_refresh     — обновляет coin metadata из CoinGecko
-  3. dbt_build            — пересобирает золотой слой (fact_candles, mart_volatility, dim_coin)
+Schedule: every 6 hours.
+Steps:
+  1. incremental_klines  — backfills the last 24 hours of candles (with overlap)
+  2. metadata_refresh    — refreshes coin metadata from CoinGecko
+  3. dbt_build           — rebuilds the gold layer (fact_candles, mart_volatility, dim_coin)
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ COMMON_ENV = {
 with DAG(
     dag_id="daily_pipeline",
     description="Incremental klines + metadata refresh + dbt build",
-    schedule="0 */6 * * *",          # каждые 6 часов
+    schedule="0 */6 * * *",          # every 6 hours
     start_date=datetime(2024, 1, 1),
     catchup=False,
     default_args=DEFAULT_ARGS,
@@ -52,28 +52,27 @@ with DAG(
     max_active_runs=1,
 ) as dag:
 
-    # ─── 1. Инкрементальный бэкфилл klines (последние 8 часов с перекрытием) ───
+    # ─── 1. Incremental klines backfill (last 24 h with overlap) ───────────────
     incremental_klines = BashOperator(
         task_id="incremental_klines",
         bash_command=(
             "python /app/ingestion/historical/klines_backfill.py "
             "--interval 1m --days 0 "
-            # days=0 → скрипт возьмёт последние 2ч; передаём явно через env
         ),
         env={
             **COMMON_ENV,
-            "DEFAULT_BACKFILL_DAYS": "1",   # перекрытие 1 день чтобы не пропустить
+            "DEFAULT_BACKFILL_DAYS": "1",   # 1-day overlap to avoid gaps
         },
     )
 
-    # ─── 2. Обновление coin metadata ────────────────────────────────────────────
+    # ─── 2. Coin metadata refresh ────────────────────────────────────────────────
     metadata_refresh = BashOperator(
         task_id="metadata_refresh",
         bash_command="python /app/ingestion/metadata/coingecko_dims.py --top 100",
         env=COMMON_ENV,
     )
 
-    # ─── 3. dbt build ───────────────────────────────────────────────────────────
+    # ─── 3. dbt build ────────────────────────────────────────────────────────────
     dbt_build = BashOperator(
         task_id="dbt_build",
         bash_command=(
@@ -102,5 +101,5 @@ with DAG(
     )
 
     # ─── DAG flow ────────────────────────────────────────────────────────────────
-    # metadata и klines параллельно → dbt
+    # klines and metadata run in parallel, then dbt
     [incremental_klines, metadata_refresh] >> dbt_build
