@@ -20,6 +20,12 @@ One command brings up the full stack; data starts flowing within seconds.
 
 ---
 
+## Dashboard
+
+![Crypto Market Overview](docs/superset_dashboard.png)
+
+---
+
 ## Quick start
 
 ```bash
