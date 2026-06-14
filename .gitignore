@@ -86,3 +86,12 @@ reports/
 
 # Superset
 superset_home/
+
+# Claude Code internal files
+.claude/
+
+# dbt local user config
+dbt/.user.yml
+
+# Article drafts (published elsewhere, not part of the project)
+HABR_ARTICLE.md
