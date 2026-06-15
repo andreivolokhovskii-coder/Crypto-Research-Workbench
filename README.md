@@ -116,8 +116,8 @@ docker compose up -d ws-producer stream-consumer
 
 | Service | URL | Credentials |
 |---|---|---|
-| Airflow | http://localhost:8080 | admin / admin |
-| Superset | http://localhost:8088 | admin / admin |
+| Airflow | http://localhost:8080 | admin / generated pass |
+| Superset | http://localhost:8088 | admin / generated pass |
 | JupyterLab | http://localhost:8888 | no auth |
 | MinIO Console | http://localhost:9002 | minioadmin / see .env |
 | Spark Master UI | http://localhost:8081 | — |
